@@ -1,0 +1,23 @@
+[
+  {"name": "intro_A_畫碗_柔和音效", "scene": "intro", "note": "最終候選"},
+  {"name": "intro_D_上下", "scene": "intro4"},
+  {"name": "intro_E_左右", "scene": "intro5"},
+  {"name": "ch1_B_音效1_輕刷", "scene": "chapter2", "title": "友誼的必要性", "sfx": "1"},
+  {"name": "ch1_B_音效2_木琴", "scene": "chapter2", "title": "友誼的必要性", "sfx": "2", "note": "最終候選"},
+  {"name": "ch1_B_音效3_暖墊", "scene": "chapter2", "title": "友誼的必要性", "sfx": "3", "note": "最終候選"},
+  {"name": "ch1_B_音效4_拇指琴", "scene": "chapter2", "title": "友誼的必要性", "sfx": "4", "note": "最終候選"},
+  {"name": "ch1_B_音效5_微光", "scene": "chapter2", "title": "友誼的必要性", "sfx": "5", "note": "最終候選"},
+  {"name": "ep3_摯友的定義_木琴", "scene": "chapter2", "title": "摯友的定義", "sub": "練習彼此誠實，互相督促成長", "sfx": "2", "hold": 2},
+  {"name": "ep3_友情的發展三要素_木琴", "scene": "chapter2", "title": "友情的發展三要素", "sfx": "2"},
+  {"name": "ep3_友情的發展三要素_微光", "scene": "chapter2", "title": "友情的發展三要素", "sfx": "5"},
+  {"name": "ep3_友誼發展成為摯友_木琴", "scene": "chapter2", "title": "友誼發展成為摯友", "sfx": "2"},
+  {"name": "ep3_友誼發展成為摯友_微光", "scene": "chapter2", "title": "友誼發展成為摯友", "sfx": "5"},
+  {"name": "ep3_學習當他人的摯友_木琴", "scene": "chapter2", "title": "學習當他人的摯友", "sfx": "2"},
+  {"name": "ep3_學習當他人的摯友_微光", "scene": "chapter2", "title": "學習當他人的摯友", "sfx": "5"},
+  {"name": "ep3_紙標題_撕紙條_重點句_透明", "page": "titles.html", "style": "strip", "kind": "quote", "bg": "none", "title": "練習彼此誠實\n互相督促成長", "sub": "", "highlight": "彼此誠實", "underline": "督促成長"},
+  {"name": "ep3_紙標題_撕紙條_重點句_全版", "page": "titles.html", "style": "strip", "kind": "quote", "bg": "full", "title": "練習彼此誠實\n互相督促成長", "sub": "", "highlight": "彼此誠實", "underline": "督促成長"},
+  {"name": "ep3_紙標題_撕紙條_小標_橫排_透明", "page": "titles.html", "style": "strip", "kind": "label", "bg": "none", "dir": "h", "items": "了解近況｜連結｜誠實", "times": "0.3｜1.8｜3.3"},
+  {"name": "ep3_紙標題_撕紙條_小標_橫排_全版", "page": "titles.html", "style": "strip", "kind": "label", "bg": "full", "dir": "h", "items": "了解近況｜連結｜誠實", "times": "0.3｜1.8｜3.3"},
+  {"name": "ep3_紙標題_多層拼貼_大標題_透明", "page": "titles.html", "style": "layer", "kind": "quote", "bg": "none", "title": "如何結交一生的好朋友", "sub": "", "highlight": ""},
+  {"name": "ep3_紙標題_多層拼貼_大標題_全版", "page": "titles.html", "style": "layer", "kind": "quote", "bg": "full", "title": "如何結交一生的好朋友", "sub": "", "highlight": ""}
+]

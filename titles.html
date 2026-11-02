@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>學園好食 紙張標題</title>
+<style>
+  :root {
+    --orange: #dd7d1b; --yellow: #f9b625; --ink: #2b2118;
+    --ui-bg: #1b1a19; --ui-panel: #262523; --ui-line: #3a3835; --ui-text: #ece8e1; --ui-dim: #a29d94;
+  }
+  html, body { margin: 0; background: var(--ui-bg); color: var(--ui-text); font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
+  html.render, body.render { background: transparent; overflow: hidden; }
+  #wrap { max-width: 1280px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+  h1 { font-size: 18px; font-weight: 700; margin: 4px 0 12px; }
+  #stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px;
+    background: radial-gradient(circle at 30% 40%, #6d8a96, #2c3a40 70%); }
+  body.render #wrap { padding: 0; max-width: none; }
+  body.render #wrap > :not(#stage) { display: none; }
+  body.render #stage { width: 1920px; height: 1080px; aspect-ratio: auto; border-radius: 0; background: none; }
+
+  #scene { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden; }
+  #bg { position: absolute; inset: 0; background: url(textures/Paper002.jpg) center / cover; filter: brightness(.88) saturate(.9); }
+  #bg::after { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(40, 28, 10, .35) 100%); }
+
+  /* 一張紙片：外層負責位置和陰影，裡面是白色毛邊和紙面 */
+  .piece { position: absolute; filter: drop-shadow(3px 6px 5px rgba(20, 12, 0, .38)); }
+  .fiber, .paper, .crumple { position: absolute; }
+  .fiber { background: #fbf8f1; }
+  .paper { background-size: 900px auto; }
+  .crumple { background: url(textures/Paper003.jpg) center / 700px auto; mix-blend-mode: multiply; filter: contrast(1.6) brightness(1.05); }
+  .dark { position: absolute; background: #2a1d0c; }
+  .content { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .tape { position: absolute; background: rgba(244, 236, 206, .62); }
+  .doodle { position: absolute; overflow: visible; }
+  .doodle path { fill: none; stroke: var(--orange); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px;
+    background: var(--ui-panel); border: 1px solid var(--ui-line); border-radius: 8px; padding: 10px 12px; }
+  .bar label { font-size: 13px; color: var(--ui-dim); display: flex; gap: 6px; align-items: center; }
+  .bar select, .bar input[type=text], .bar textarea { background: var(--ui-bg); color: var(--ui-text); border: 1px solid var(--ui-line);
+    border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 14px; }
+  .bar textarea { width: min(260px, 70vw); height: 52px; resize: vertical; }
+  button { background: var(--orange); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  #scrub { flex: 1; min-width: 160px; accent-color: var(--orange); }
+  #time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ui-dim); min-width: 92px; text-align: right; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>學園好食 紙張標題</h1>
+  <div id="stage"><div id="scene"></div></div>
+  <div class="bar">
+    <button id="play">暫停</button>
+    <input id="scrub" type="range" min="0" max="1" step="0.0001" value="0">
+    <span id="time">0.00 / 0.00</span>
+  </div>
+  <div class="bar">
+    <label>造型 <select id="style"><option value="strip">撕紙條</option><option value="layer">多層拼貼</option></select></label>
+    <label>用途 <select id="kind"><option value="quote">重點句</option><option value="label">小標題條</option></select></label>
+    <label>排列 <select id="dir"><option value="h">橫排</option><option value="v">直排</option></select></label>
+    <label>背景 <select id="bg"><option value="none">透明</option><option value="full">全版紙張</option></select></label>
+  </div>
+  <div class="bar">
+    <label>重點句（換行分句） <textarea id="title"></textarea></label>
+    <label>出處 <input id="sub" type="text"></label>
+    <label>重點字 <input id="highlight" type="text"></label>
+    <label>底線 <input id="underline" type="text"></label>
+    <label>小標題（用｜分隔） <input id="items" type="text"></label>
+    <label>出現秒數（用｜分隔） <input id="times" type="text"></label>
+  </div>
+</div>
+
+<script>
+const W = 1920, H = 1080;
+// 定格動畫：紙片每秒只動 12 次，像一張一張拍出來的
+const STOP_FPS = 12;
+const q = new URLSearchParams(location.search);
+const P = {
+  style: q.get('style') || 'strip',
+  kind: q.get('kind') || 'quote',
+  dir: q.get('dir') || 'h',
+  bg: q.get('bg') || 'none',
+  title: q.get('title') || '練習彼此誠實\n互相督促成長',
+  sub: q.get('sub') ?? '摯友的定義',
+  highlight: q.get('highlight') ?? '彼此誠實',
+  underline: q.get('underline') ?? '督促成長',
+  items: q.get('items') || '了解近況｜連結｜誠實',
+  // 小標題每一點出現的秒數，用｜分隔；沒填的點接在前一點後面 0.45 秒
+  times: q.get('times') || '',
+  hold: Math.max(0, +q.get('hold') || 0),
+  render: q.has('render'),
+};
+if (P.render) { document.documentElement.classList.add('render'); document.body.classList.add('render'); }
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, start, dur) => clamp((t - start) / dur);
+const lerp = (a, b, x) => a + (b - a) * x;
+const ease = {
+  outCubic: x => 1 - Math.pow(1 - x, 3),
+  outBack: x => { const c1 = 1.6, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); },
+};
+function rng(seed) { return () => (seed = (seed * 16807) % 2147483647, (seed - 1) / 2147483646); }
+const hash = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+
+// 撕紙條用粗圓體（Mac 內建圓體），沒有的話改用粉圓
+const FONT_ROUND = "'Yuanti TC', 'jf open 粉圓 2.1', 'jf-openhuninn-2.1', 'Noto Sans TC', sans-serif";
+const FONT_BOLD = "'Noto Sans TC', 'PingFang TC', sans-serif";
+const TEX = { white: 'textures/Paper001.jpg', crease: 'textures/Paper003.jpg', kraft: 'textures/Paper006.jpg', grey: 'textures/Paper002.jpg' };
+
+const scene = document.getElementById('scene');
+const cvs = document.createElement('canvas').getContext('2d');
+const measure = (s, font) => { cvs.font = font; return cvs.measureText(s).width; };
+
+/* ---------- 撕紙形狀 ---------- */
+// 沿著矩形四邊產生鋸齒點；amp 是上右下左四邊撕得多粗
+function torn(w, h, amp, r, step = 11) {
+  const pts = [];
+  const edge = (x0, y0, x1, y1, a, nx, ny) => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    let d = 0;
+    while (d < len) {
+      const k = d / len, j = a * (.35 + .65 * r()) * (.7 + .3 * Math.sin(d * .05 + r() * 6));
+      pts.push([x0 + (x1 - x0) * k + nx * j, y0 + (y1 - y0) * k + ny * j]);
+      d += step * (.6 + r() * .8);
+    }
+  };
+  edge(0, 0, w, 0, amp[0], 0, 1);
+  edge(w, 0, w, h, amp[1], -1, 0);
+  edge(w, h, 0, h, amp[2], 0, -1);
+  edge(0, h, 0, 0, amp[3], 1, 0);
+  return pts;
+}
+// 揉成紙球時的形狀：同樣數量的點，縮成一團不規則的圓
+function blobOf(pts, w, h, r) {
+  const R = Math.min(w, h) * .62;
+  return pts.map(([x, y]) => {
+    const a = Math.atan2((y - h / 2) / h, (x - w / 2) / w);
+    const rr = R * (.7 + .55 * r());
+    return [w / 2 + Math.cos(a) * rr, h / 2 + Math.sin(a) * rr * .85];
+  });
+}
+const polyCSS = pts => `polygon(${pts.map(([x, y]) => `${x.toFixed(1)}px ${y.toFixed(1)}px`).join(',')})`;
+
+/* ---------- 紙片 ---------- */
+let pieces = [], doodles = [], seedN = 1;
+function makePiece(o) {
+  const r = rng(o.seed || (seedN++ * 7919));
+  const { w, h } = o;
+  const amp = o.amp || [4, 10, 4, 10];
+  const f = o.fiber ?? 4;
+  const poly = torn(w, h, amp, r);
+  // 毛邊比紙面大一圈，放在紙面外面一點
+  const fpoly = torn(w + f * 2, h + f * 2, amp.map(a => a * 1.3 + 1), r);
+  const el = document.createElement('div');
+  el.className = 'piece';
+  Object.assign(el.style, { left: o.x + 'px', top: o.y + 'px', width: w + 'px', height: h + 'px', zIndex: o.z || 1 });
+  const paperBg = o.lines
+    ? `repeating-linear-gradient(180deg, transparent 0 32px, rgba(90,140,190,.35) 32px 34px), linear-gradient(90deg, transparent 54px, rgba(214,70,60,.4) 54px 56px, transparent 56px), url(${o.tex})`
+    : `url(${o.tex})`;
+  el.innerHTML = `${f ? `<div class="fiber" style="left:${-f}px;top:${-f}px;width:${w + f * 2}px;height:${h + f * 2}px"></div>` : ''}
+    <div class="paper" style="inset:0;background-image:${paperBg};background-position:${Math.floor(r() * 600)}px ${Math.floor(r() * 600)}px;${o.tint ? `filter:${o.tint};` : ''}"></div>
+    ${o.crumple ? `<div class="crumple" style="inset:0;opacity:.55"></div>` : ''}
+    <div class="dark" style="inset:0;opacity:0"></div>
+    <div class="content">${o.html || ''}</div>`;
+  scene.appendChild(el);
+  const p = {
+    ...o, el, poly, fpoly, blob: blobOf(poly, w, h, r), fblob: blobOf(fpoly, w + f * 2, h + f * 2, r),
+    fiberEl: el.querySelector('.fiber'), paperEl: el.querySelector('.paper'),
+    crumpleEl: el.querySelector('.crumple'), darkEl: el.querySelector('.dark'), contentEl: el.querySelector('.content'),
+    idx: pieces.length,
+  };
+  pieces.push(p);
+  return p;
+}
+function makeTape(o) {
+  const r = rng(seedN++ * 104729);
+  const pts = torn(o.w, o.h, [1, 5, 1, 5], r, 6);
+  const el = document.createElement('div');
+  el.className = 'tape';
+  Object.assign(el.style, { left: o.x + 'px', top: o.y + 'px', width: o.w + 'px', height: o.h + 'px', zIndex: o.z || 50, clipPath: polyCSS(pts) });
+  scene.appendChild(el);
+  const p = { ...o, anim: 'slap', el, idx: pieces.length };
+  pieces.push(p);
+  return p;
+}
+// 手繪小符號（100×100 座標）
+const DOODLE = {
+  sparkle: 'M12 40 L28 50 M34 12 L40 32 M62 18 L50 36',
+  swoosh: 'M2 60 C 30 40, 64 72, 98 46',
+  arrow: 'M4 70 C 30 40, 60 36, 88 44 M70 30 L88 44 L70 58',
+  circle: 'M52 6 C 88 4, 98 42, 84 72 C 70 96, 22 98, 8 66 C -2 36, 22 6, 60 12',
+  star: 'M50 8 L60 40 L94 40 L66 60 L76 92 L50 72 L24 92 L34 60 L6 40 L40 40 Z',
+};
+// o.d 有給的話是自訂路徑，座標就是 o.w × o.h 的像素
+function makeDoodle(o) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  el.setAttribute('class', 'doodle');
+  const bw = o.d ? o.w : o.size, bh = o.d ? o.h : o.size;
+  el.setAttribute('viewBox', o.d ? `0 0 ${bw} ${bh}` : '0 0 100 100');
+  Object.assign(el.style, { left: o.x + 'px', top: o.y + 'px', width: bw + 'px', height: bh + 'px', zIndex: o.z || 60,
+    transform: `rotate(${o.rot || 0}deg)` });
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', o.d || DOODLE[o.shape]);
+  if (o.color) path.style.stroke = o.color;
+  path.style.strokeWidth = o.d ? 7 * (o.weight || 1) : 6 * 100 / o.size * (o.weight || 1) * (o.size / 100);
+  el.appendChild(path);
+  scene.appendChild(el);
+  const len = path.getTotalLength();
+  path.style.strokeDasharray = len;
+  const d = { ...o, el, path, len };
+  doodles.push(d);
+  return d;
+}
+
+/* ---------- 版面 ---------- */
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+function lineHTML(line, font, size, color, hlColor) {
+  if (!P.highlight || !line.includes(P.highlight)) return esc(line);
+  const [a, ...rest] = line.split(P.highlight);
+  const mark = hlColor === 'marker'
+    ? `<span class="hlw" style="position:relative;display:inline-block"><span class="hlbg" style="position:absolute;left:-6px;right:-6px;top:52%;height:40%;background:rgba(249,182,37,.75);transform-origin:0 50%;border-radius:4px 10px 6px 12px"></span><span style="position:relative">${esc(P.highlight)}</span></span>`
+    : `<span style="color:${hlColor}">${esc(P.highlight)}</span>`;
+  return esc(a) + mark + esc(rest.join(P.highlight));
+}
+
+function buildQuoteStrip() {
+  const lines = P.title.split('\n').map(s => s.trim()).filter(Boolean);
+  let size = 96;
+  const font = s => `700 ${s}px ${FONT_ROUND}`;
+  const maxW = Math.max(...lines.map(l => measure(l, font(size)) * 1.08));
+  if (maxW > 1400) size *= 1400 / maxW;
+  const lh = size * 1.55, gap = -size * .12;
+  // 文字實際寬度（含字距）
+  const tw = s => measure(s, font(size)) + [...s].length * .04 * size;
+  const sfs = size * .42, sw = measure(P.sub, `700 ${sfs}px ${FONT_ROUND}`) * 1.15 + sfs * 2, sh = sfs * 1.9;
+  const total = lines.length * lh + (lines.length - 1) * gap + (P.sub ? sh * .6 : 0);
+  let y = (H - total) / 2 + (P.sub ? sh * .6 : 0);
+  const r = rng(5);
+  const out = [];
+  lines.forEach((l, i) => {
+    const w = measure(l, font(size)) * 1.08 + size * 1.1;
+    const x = W / 2 - w / 2 + (r() - .5) * size * .6;
+    out.push(makePiece({ x, y, w, h: lh, rot: (i % 2 ? 1.6 : -1.8), tex: TEX.white, crumple: true, anim: 'uncrumple',
+      amp: [5, 14, 5, 14], z: 10 + i, text: l,
+      html: `<div style="font-family:${FONT_ROUND};font-weight:700;font-size:${size}px;color:#2b2118;letter-spacing:.04em;white-space:nowrap">${lineHTML(l, font(size), size, '#2b2118', 'marker')}</div>` }));
+    y += lh + gap;
+  });
+  const first = out[0], last = out[lines.length - 1];
+  // 出處小字條：貼在第一句的左上角
+  if (P.sub) {
+    out.push(makePiece({ x: first.x - sw * .18, y: first.y - sh * .72, w: sw, h: sh, rot: -4, tex: TEX.white, crumple: true,
+      anim: 'uncrumple', amp: [3, 8, 3, 8], z: 20,
+      html: `<div style="font-family:${FONT_ROUND};font-weight:700;font-size:${sfs}px;color:#dd7d1b;letter-spacing:.12em">${esc(P.sub)}</div>` }));
+  }
+  const extras = [makeDoodle({ shape: 'sparkle', x: first.x + first.w - 30, y: first.y - 80, size: 140, rot: 10 })];
+  // 手繪底線：畫在指定的字下面；沒指定就在最後一句下面畫一道弧線
+  const ul = out.slice(0, lines.length).find(p => P.underline && p.text.includes(P.underline));
+  if (ul) {
+    const pre = ul.text.slice(0, ul.text.indexOf(P.underline));
+    // 第一版那條粗筆刷弧線，移到指定的字下面
+    const tw0 = tw(P.underline) - .04 * size;
+    const cx = ul.x + ul.w / 2, cy = ul.y + ul.h / 2, a = ul.rot * Math.PI / 180;
+    const sz = Math.min(360, tw0);
+    const dx = -tw(ul.text) / 2 + tw(pre) - sz * .02 + sz / 2, dy = ul.h / 2 + sz * .02;
+    const mx = cx + dx * Math.cos(a) - dy * Math.sin(a), my = cy + dx * Math.sin(a) + dy * Math.cos(a);
+    extras.push(makeDoodle({ shape: 'swoosh', x: mx - sz / 2, y: my - sz / 2, size: sz, rot: ul.rot - 2 }));
+  } else {
+    extras.push(makeDoodle({ shape: 'swoosh', x: last.x + 20, y: last.y + last.h - Math.min(360, last.w * .5) * .52, size: Math.min(360, last.w * .5), rot: -2 }));
+  }
+  return { strips: out, extras };
+}
+
+function buildQuoteLayer() {
+  const lines = P.title.split('\n').map(s => s.trim()).filter(Boolean);
+  let size = 104;
+  const font = s => `900 ${s}px ${FONT_BOLD}`;
+  const maxW = Math.max(...lines.map(l => measure(l, font(size)) * 1.06));
+  if (maxW > 1300) size *= 1300 / maxW;
+  const lh = size * 1.32;
+  const tw = maxW * (size / 104 > 1 ? 1 : 1) + size * 1.3;
+  const th = lines.length * lh + size * .7;
+  const cx = W / 2, cy = H / 2 - (P.sub ? 30 : 0);
+  const x = cx - tw / 2, y = cy - th / 2;
+  const out = [];
+  out.push(makePiece({ x: x - 60, y: y - 40, w: tw * .62, h: th + 60, rot: -5, tex: TEX.kraft, anim: 'slide', from: [-260, -120], amp: [8, 12, 8, 12], z: 2 }));
+  out.push(makePiece({ x: x + tw * .45, y: y - 20, w: tw * .62, h: th + 40, rot: 4, tex: TEX.grey, anim: 'slide', from: [280, -80], amp: [8, 12, 8, 12], z: 3 }));
+  out.push(makePiece({ x: x + tw * .12, y: y + th * .45, w: tw * .7, h: th * .75, rot: -2.5, tex: TEX.white, lines: true, anim: 'slide', from: [0, 260], amp: [10, 6, 10, 6], z: 4 }));
+  out.push(makePiece({ x, y, w: tw, h: th, rot: -1, tex: TEX.white, anim: 'slide', from: [0, 160], amp: [6, 14, 6, 14], z: 10,
+    html: `<div style="font-family:${FONT_BOLD};font-weight:900;font-size:${size}px;line-height:${lh}px;color:#2b2118;text-align:center;letter-spacing:.03em">${lines.map(l => lineHTML(l, font(size), size, '#2b2118', '#dd7d1b')).join('<br>')}</div>` }));
+  out.push(makeTape({ x: x - 30, y: y - 22, w: 180, h: 54, rot: -28, z: 40 }));
+  out.push(makeTape({ x: x + tw - 150, y: y + th - 34, w: 190, h: 54, rot: -18, z: 40 }));
+  if (P.sub) {
+    const fs = 40, w = measure(P.sub, `700 ${fs}px ${FONT_BOLD}`) * 1.2 + fs * 1.6;
+    const pill = makePiece({ x: cx - w / 2, y: y + th + 6, w, h: fs * 1.8, rot: 1, tex: TEX.white, fiber: 0, anim: 'pop', amp: [0, 0, 0, 0], z: 30,
+      tint: 'brightness(.18) sepia(.4)',
+      html: `<div style="font-family:${FONT_BOLD};font-weight:700;font-size:${fs}px;color:#fbf3e3;letter-spacing:.14em">${esc(P.sub)}</div>` });
+    pill.el.style.borderRadius = '999px';
+    pill.paperEl.style.borderRadius = '999px';
+    out.push(pill);
+  }
+  return { strips: out, extras: [] };
+}
+
+function labelItems() { return P.items.split(/[｜|\n]/).map(s => s.trim()).filter(Boolean); }
+
+function buildLabels() {
+  const items = labelItems();
+  const vertical = P.dir === 'v';
+  const layer = P.style === 'layer';
+  let fs = 80, nfs = 50;
+  const fontAt = s => layer ? `900 ${s}px ${FONT_BOLD}` : `700 ${s}px ${FONT_ROUND}`;
+  // 橫排一字排開：太寬就整組縮小
+  const rowGap = 70, rowW = s => items.reduce((a, t) => a + measure(t, fontAt(s)) * 1.05 + s * 2.3, 0) + rowGap * (items.length - 1);
+  if (!vertical && rowW(fs) > 1720) { const k = 1720 / rowW(fs); fs *= k; nfs *= k; }
+  const font = fontAt(fs);
+  const fam = layer ? `font-family:${FONT_BOLD};font-weight:900` : `font-family:${FONT_ROUND};font-weight:700`;
+  const out = [], extras = [];
+  const r = rng(21);
+  const times = P.times.split(/[｜|,，]/).map(s => parseFloat(s));
+  let rowX = (W - rowW(fs)) / 2, prevT = null;
+  items.forEach((text, i) => {
+    const chars = [...text].length;
+    let x, y, w, h;
+    if (!vertical) {
+      // 橫排：紙條在畫面中間左右一字排開
+      w = measure(text, font) * 1.05 + fs * 2.3; h = fs * 1.75;
+      x = rowX; y = H / 2 - h / 2 + (i % 2 ? 26 : -18) + (r() - .5) * 20;
+      rowX += w + rowGap;
+    } else {
+      // 直排：三條直的紙條，在畫面右側由右往左排（直書閱讀順序）
+      w = fs * 1.75; h = chars * fs * 1.12 + fs * 2.2;
+      x = 1640 - i * (w + 46); y = 250 + (r() - .5) * 40;
+    }
+    // 數字：拼貼版是深色圓章；撕紙條版是橘色數字外面一個手繪圈（圈會一筆畫出來）
+    const num = layer
+      ? `<span style="font-family:${FONT_BOLD};font-weight:900;font-size:${nfs * .85}px;color:#fbf3e3;background:#2b2118;border-radius:999px;width:70px;height:70px;display:inline-flex;align-items:center;justify-content:center;flex:none">${i + 1}</span>`
+      : `<span style="position:relative;font-family:${FONT_ROUND};font-weight:700;font-size:${nfs}px;color:#dd7d1b;width:72px;height:72px;display:inline-flex;align-items:center;justify-content:center;flex:none">${i + 1}<svg class="nc" viewBox="0 0 100 100" style="position:absolute;inset:-6px;width:84px;height:84px;overflow:visible;transform:rotate(${Math.round(r() * 90)}deg)"><path d="${DOODLE.circle}" fill="none" stroke="#dd7d1b" stroke-width="7" stroke-linecap="round"/></svg></span>`;
+    const txt = `<span style="${fam};font-size:${fs}px;color:#2b2118;letter-spacing:.06em;${vertical ? 'writing-mode:vertical-rl;text-orientation:upright;' : ''}">${esc(text)}</span>`;
+    const html = vertical
+      ? `<div style="display:flex;flex-direction:column;align-items:center;gap:${fs * .35}px">${num}${txt}</div>`
+      : `<div style="display:flex;align-items:center;gap:${fs * .4}px">${num}${txt}</div>`;
+    const rot = (r() - .5) * 4;
+    const t0 = Number.isFinite(times[i]) ? Math.max(0, times[i]) : (prevT == null ? .25 : prevT + .45);
+    prevT = t0;
+    if (layer) {
+      const back = vertical
+        ? { x: x - 14, y: y + 30, w: w + 28, h: h - 10 }
+        : { x: x + 30, y: y - 14, w: w - 10, h: h + 28 };
+      out.push(makePiece({ ...back, rot: rot + (i % 2 ? 4 : -4), tex: i % 2 ? TEX.grey : TEX.kraft, anim: 'slide', from: vertical ? [0, -200] : [-220, 0], t0, amp: [8, 10, 8, 10], z: 2 + i * 5 }));
+      out.push(makePiece({ x, y, w, h, rot, tex: TEX.white, anim: 'slide', from: vertical ? [0, 180] : [-180, 0], t0: t0 + .1, amp: vertical ? [10, 4, 10, 4] : [4, 12, 4, 12], z: 3 + i * 5, html }));
+      out.push(makeTape(vertical
+        ? { x: x - 10, y: y - 24, w: w + 20, h: 46, rot: rot - 6, t0: t0 + .28, z: 4 + i * 5 }
+        : { x: x - 34, y: y + h / 2 - 26, w: 120, h: 46, rot: -70 + rot, t0: t0 + .28, z: 4 + i * 5 }));
+    } else {
+      const p = makePiece({ x, y, w, h, rot, tex: TEX.white, crumple: true, anim: 'uncrumple', t0,
+        amp: vertical ? [12, 4, 12, 4] : [4, 13, 4, 13], z: 3 + i, html });
+      out.push(p);
+    }
+  });
+  return { strips: out, extras };
+}
+
+/* ---------- 時間軸 ---------- */
+let S;
+function build() {
+  pieces = []; doodles = []; seedN = 1;
+  scene.innerHTML = P.bg === 'full' ? '<div id="bg"></div>' : '';
+  const L = P.kind === 'label' ? buildLabels() : (P.style === 'layer' ? buildQuoteLayer() : buildQuoteStrip());
+  // 沒有指定出場時間的紙片，依序每 0.28 秒出一張
+  let t = .2;
+  pieces.forEach(p => {
+    if (p.t0 == null) { p.t0 = t; t += p.anim === 'slap' ? .1 : p.anim === 'slide' ? .12 : .28; }
+  });
+  const lastIn = Math.max(...pieces.map(p => p.t0)) + .45;
+  doodles.forEach((d, i) => { if (d.t0 == null) d.t0 = lastIn + i * .2; });
+  const inEnd = Math.max(lastIn, ...doodles.map(d => d.t0 + .35));
+  const tExit = inEnd + 2.6 + P.hold;
+  const order = [...pieces].sort((a, b) => b.t0 - a.t0);
+  order.forEach((p, i) => p.tOut = tExit + .15 + i * .07);
+  doodles.forEach(d => d.tOut = tExit);
+  const dur = tExit + .15 + order.length * .07 + .45;
+  S = { tExit, dur };
+  // 螢光筆底色
+  pieces.forEach(p => {
+    p.hl = p.el.querySelector('.hlbg');
+    p.nc = p.el.querySelector('.nc path');
+    if (p.nc) { p.ncLen = p.nc.getTotalLength(); p.nc.style.strokeDasharray = p.ncLen; }
+  });
+}
+
+function renderAt(t) {
+  const tq = Math.floor(t * STOP_FPS + 1e-6) / STOP_FPS;
+  const frame = Math.floor(t * STOP_FPS + 1e-6);
+  pieces.forEach(p => {
+    const inP = prog(tq, p.t0, p.anim === 'uncrumple' ? .42 : p.anim === 'slap' ? .17 : .3);
+    const outP = prog(tq, p.tOut, p.anim === 'uncrumple' ? .34 : .25);
+    const vis = tq >= p.t0 && outP < 1;
+    p.el.style.visibility = vis ? 'visible' : 'hidden';
+    if (!vis) return;
+    const jx = (hash(frame, p.idx) - .5) * 2, jy = (hash(frame, p.idx + 50) - .5) * 2, jr = (hash(frame, p.idx + 90) - .5) * .6;
+    if (p.anim === 'uncrumple') {
+      // 紙球攤開：形狀從一團慢慢變成紙條，越平越亮，攤平才看得到字
+      const e = clamp(ease.outBack(inP) - outP * 1.0, 0, 1.05);
+      const flat = clamp(e);
+      const noise = (1 - flat) * 10;
+      const mix = (a, b) => a.map(([x, y], k) => [lerp(b[k][0], x, flat) + (hash(frame, k + p.idx * 7) - .5) * noise,
+        lerp(b[k][1], y, flat) + (hash(frame + 3, k + p.idx * 7) - .5) * noise]);
+      p.paperEl.style.clipPath = p.darkEl.style.clipPath = polyCSS(mix(p.poly, p.blob));
+      if (p.crumpleEl) { p.crumpleEl.style.clipPath = p.paperEl.style.clipPath; p.crumpleEl.style.opacity = lerp(.95, .5, flat); }
+      if (p.fiberEl) p.fiberEl.style.clipPath = polyCSS(mix(p.fpoly, p.fblob));
+      p.darkEl.style.opacity = .35 * (1 - flat);
+      p.contentEl.style.opacity = flat > .85 ? 1 : 0;
+      const sc = lerp(.42, 1, e);
+      p.el.style.transform = `translate(${jx}px,${jy}px) rotate(${p.rot + (1 - flat) * 30 + jr}deg) scale(${sc})`;
+    } else if (p.anim === 'slide') {
+      if (!p.clipped) { p.paperEl.style.clipPath = p.darkEl.style.clipPath = polyCSS(p.poly); if (p.fiberEl) p.fiberEl.style.clipPath = polyCSS(p.fpoly); p.clipped = true; }
+      const e = ease.outBack(inP), o = outP;
+      const dx = p.from[0] * (1 - e) - p.from[0] * .8 * o, dy = p.from[1] * (1 - e) - p.from[1] * .8 * o;
+      p.el.style.opacity = 1 - o;
+      p.el.style.transform = `translate(${dx + jx}px,${dy + jy}px) rotate(${p.rot + (1 - e) * 14 - o * 10 + jr}deg) scale(${lerp(1.08, 1, e)})`;
+    } else if (p.anim === 'slap') {
+      const e = inP;
+      p.el.style.opacity = (e > 0 ? 1 : 0) * (1 - outP);
+      p.el.style.transform = `translate(${jx}px,${jy}px) rotate(${p.rot + jr}deg) scale(${lerp(1.3, 1, e)})`;
+    } else if (p.anim === 'pop') {
+      if (!p.clipped) { p.clipped = true; }
+      const e = ease.outBack(inP);
+      p.el.style.transform = `translate(${jx}px,${jy}px) rotate(${p.rot + jr}deg) scale(${Math.max(0, e * (1 - outP))})`;
+    }
+    if (p.hl) p.hl.style.transform = `scaleX(${prog(tq, p.t0 + .5, .25)})`;
+    if (p.nc) p.nc.style.strokeDashoffset = p.ncLen * (1 - prog(tq, p.t0 + .45, .3));
+  });
+  doodles.forEach(d => {
+    const e = prog(tq, d.t0, d.draw || .34) - prog(tq, d.tOut, .17);
+    d.el.style.visibility = e > 0 ? 'visible' : 'hidden';
+    d.path.style.strokeDashoffset = d.len * (1 - clamp(e));
+  });
+}
+
+function buildSfx() {
+  const ev = [];
+  pieces.forEach(p => {
+    if (p.anim === 'uncrumple') {
+      // 揉紙聲壓低音高，避免尖銳
+      ev.push({ t: p.t0, type: 'crinkle', dur: .42, gain: .32, density: 130, f0: 600, f1: 1600 }, { t: p.t0 + .36, type: 'flap', gain: .3 });
+      ev.push({ t: p.tOut, type: 'crinkle', dur: .32, gain: .22, density: 130, f0: 600, f1: 1600 });
+    } else if (p.anim === 'slide') {
+      ev.push({ t: p.t0, type: 'paper_slide', dur: .3, gain: .35 }, { t: p.t0 + .24, type: 'flap', gain: .25 });
+      ev.push({ t: p.tOut, type: 'paper_slide', dur: .25, gain: .2 });
+    } else if (p.anim === 'slap') {
+      ev.push({ t: p.t0 + .08, type: 'thock', pitch: 1.3, gain: .2 }, { t: p.t0, type: 'crinkle', dur: .12, gain: .12, f0: 600, f1: 1600 });
+    } else if (p.anim === 'pop') {
+      ev.push({ t: p.t0 + .1, type: 'flap', gain: .2 });
+    }
+    if (p.hl) ev.push({ t: p.t0 + .5, type: 'marker', dur: .25, gain: .25 });
+    if (p.nc) ev.push({ t: p.t0 + .45, type: 'marker', dur: .3, gain: .2 });
+  });
+  doodles.forEach(d => ev.push({ t: d.t0, type: 'marker', dur: .3, gain: .22 }));
+  return { master: { lp: 3000, verb: .12 }, events: ev };
+}
+
+/* ---------------- 播放與輸出 ---------------- */
+async function start() {
+  await Promise.all([
+    document.fonts.load(`700 80px ${FONT_ROUND}`, '學園'), document.fonts.load(`900 80px ${FONT_BOLD}`, '學園'),
+    ...Object.values(TEX).map(src => new Promise(res => { const im = new Image(); im.onload = im.onerror = res; im.src = src; })),
+  ]);
+  build();
+  window.DUR = S.dur; window.renderAt = renderAt; window.SFX = buildSfx();
+  renderAt(0);
+  window.OPAQUE = P.bg === 'full';
+  window.READY = true;
+}
+
+const $ = s => document.getElementById(s);
+function fit() { if (!P.render) scene.style.transform = `scale(${$('stage').clientWidth / W})`; }
+let t0 = performance.now(), playing = true, cur = 0;
+function tick(now) {
+  if (window.READY && playing) {
+    cur = ((now - t0) / 1000) % (S.dur + .6);
+    renderAt(Math.min(cur, S.dur));
+    $('scrub').value = Math.min(cur, S.dur) / S.dur;
+    $('time').textContent = `${Math.min(cur, S.dur).toFixed(2)} / ${S.dur.toFixed(2)}`;
+  }
+  requestAnimationFrame(tick);
+}
+if (!P.render) {
+  ['style', 'kind', 'dir', 'bg', 'title', 'sub', 'highlight', 'underline', 'items', 'times'].forEach(k => {
+    $(k).value = P[k];
+    $(k).addEventListener('change', () => { P[k] = $(k).value; build(); window.DUR = S.dur; t0 = performance.now(); });
+  });
+  $('play').onclick = () => {
+    playing = !playing; $('play').textContent = playing ? '暫停' : '播放';
+    if (playing) t0 = performance.now() - cur * 1000;
+  };
+  $('scrub').oninput = e => {
+    playing = false; $('play').textContent = '播放';
+    cur = e.target.value * S.dur; renderAt(cur);
+    $('time').textContent = `${cur.toFixed(2)} / ${S.dur.toFixed(2)}`;
+  };
+  addEventListener('resize', fit); fit();
+  start().then(() => requestAnimationFrame(tick));
+} else {
+  start();
+}
+</script>
+</body>
+</html>

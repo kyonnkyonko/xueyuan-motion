@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>學園好食 片頭轉場</title>
+<style>
+  :root {
+    --orange: #dd7d1b; --yellow: #f9b625; --teal: #3cb1c8; --cream: #fff8ec; --ink: #2b2118;
+    --ui-bg: #1b1a19; --ui-panel: #262523; --ui-line: #3a3835; --ui-text: #ece8e1; --ui-dim: #a29d94;
+  }
+  html, body { margin: 0; background: var(--ui-bg); color: var(--ui-text);
+    font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
+  html.render, body.render { background: transparent; overflow: hidden; }
+  #wrap { max-width: 1280px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+  h1 { font-size: 18px; font-weight: 700; margin: 4px 0 12px; }
+  #stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; }
+  body.render #stage { width: 1920px; height: 1080px; aspect-ratio: auto; border-radius: 0; }
+  #stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* 預覽用的「假影片畫面」，輸出時不會出現 */
+  #sample { position: absolute; inset: 0; display: grid; place-items: center;
+    background: radial-gradient(circle at 30% 40%, #6d8a96, #2c3a40 70%); color: #fff8; font-size: clamp(14px, 2.4vw, 30px); }
+  #sample.checker { background: repeating-conic-gradient(#2c2c2c 0 25%, #3a3a3a 0 50%) 0 0 / 32px 32px; }
+  body.render #sample { display: none; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px;
+    background: var(--ui-panel); border: 1px solid var(--ui-line); border-radius: 8px; padding: 10px 12px; }
+  .bar label { font-size: 13px; color: var(--ui-dim); display: flex; gap: 6px; align-items: center; }
+  .bar input[type=text], .bar select { background: var(--ui-bg); color: var(--ui-text); border: 1px solid var(--ui-line);
+    border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 14px; }
+  .bar input.num { width: 48px; }
+  .bar input.title { width: min(320px, 60vw); }
+  button { background: var(--orange); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  #scrub { flex: 1; min-width: 160px; accent-color: var(--orange); }
+  #time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ui-dim); min-width: 92px; text-align: right; }
+  body.render #wrap > :not(#stage) { display: none; }
+  body.render #wrap { padding: 0; max-width: none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>學園好食 片頭與章節轉場</h1>
+  <div id="stage">
+    <div id="sample">（這裡會是你的影片畫面）</div>
+    <svg id="svg" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+  <div class="bar">
+    <button id="play">暫停</button>
+    <input id="scrub" type="range" min="0" max="1" step="0.0001" value="0">
+    <span id="time">0.00 / 0.00</span>
+  </div>
+  <div class="bar">
+    <label>畫面 <select id="scene"><option value="intro">片頭 A 畫碗</option><option value="intro2">片頭 B 滾輪</option><option value="intro3">片頭 C 斜切</option><option value="intro4">片頭 D 上下</option><option value="intro5">片頭 E 左右</option><option value="chapter">章節 A 有號碼</option><option value="chapter2">章節 B 置中</option><option value="chapter3">章節 C 膠囊</option></select></label>
+    <label>章節 <input id="num" class="num" type="text"></label>
+    <label>標題 <input id="title" class="title" type="text"></label>
+    <label>副標 <input id="sub" class="title" type="text" placeholder="可留空"></label>
+    <label>底圖 <select id="bgsel"><option value="sample">假影片</option><option value="checker">透明格</option></select></label>
+  </div>
+</div>
+
+<script src="logo.js"></script>
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const W = 1920, H = 1080;
+const C = { orange: '#dd7d1b', yellow: '#f9b625', teal: '#3cb1c8', cream: '#fff8ec', ink: '#2b2118', sub: '#7a6a58' };
+const FONT = '"Noto Sans TC", "PingFang TC", sans-serif';
+// logomark 在 PDF 座標裡的圓心
+const MX = 647.5, MY = 208.5;
+
+const q = new URLSearchParams(location.search);
+const P = {
+  scene: q.get('scene') || 'intro',
+  num: q.get('num') || '01',
+  title: q.get('title') || '饒恕的來源是上帝',
+  sub: q.get('sub') || '',
+  sfx: q.get('sfx') || '',
+  hold: q.get('hold') || '',
+  render: q.has('render'),
+};
+if (P.render) { document.documentElement.classList.add('render'); document.body.classList.add('render'); }
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, start, dur) => clamp((t - start) / dur);
+const lerp = (a, b, x) => a + (b - a) * x;
+const ease = {
+  outExpo: x => x >= 1 ? 1 : 1 - Math.pow(2, -10 * x),
+  inExpo: x => x <= 0 ? 0 : Math.pow(2, 10 * x - 10),
+  outCubic: x => 1 - Math.pow(1 - x, 3),
+  inCubic: x => x * x * x,
+  inOutCubic: x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2,
+  inOutExpo: x => x <= 0 ? 0 : x >= 1 ? 1 : x < .5 ? Math.pow(2, 20 * x - 10) / 2 : (2 - Math.pow(2, -20 * x + 10)) / 2,
+  outBounce: x => {
+    const n1 = 7.5625, d1 = 2.75;
+    if (x < 1 / d1) return n1 * x * x;
+    if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + .75;
+    if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + .9375;
+    return n1 * (x -= 2.625 / d1) * x + .984375;
+  },
+  outBack: x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); },
+};
+function rng(seed) { return () => (seed = (seed * 16807) % 2147483647, (seed - 1) / 2147483646); }
+
+const svg = document.getElementById('svg');
+let defs, uid = 0;
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const id = p => `${p}${++uid}`;
+
+// 扇形路徑，用來把 logomark 的圓弧「畫」出來
+function wedge(cx, cy, r, a0, sweep) {
+  if (sweep <= 0) return 'M0 0';
+  if (sweep >= 359.9) return `M${cx - r} ${cy - r}h${2 * r}v${2 * r}h${-2 * r}Z`;
+  const n = Math.max(2, Math.ceil(sweep / 4));
+  let d = `M${cx} ${cy}`;
+  for (let i = 0; i <= n; i++) {
+    const a = (a0 + sweep * i / n) * Math.PI / 180;
+    d += `L${(cx + r * Math.cos(a)).toFixed(2)} ${(cy + r * Math.sin(a)).toFixed(2)}`;
+  }
+  return d + 'Z';
+}
+
+// 一層全螢幕色塊：圓形長進來（clip），再從另一個點挖洞離開（mask）
+function wipeLayer(parent, fill) {
+  const clipId = id('clip'), maskId = id('mask');
+  const cp = el('clipPath', { id: clipId }, defs);
+  const inC = el('circle', { r: 0 }, cp);
+  const mk = el('mask', { id: maskId, maskUnits: 'userSpaceOnUse', x: 0, y: 0, width: W, height: H }, defs);
+  el('rect', { width: W, height: H, fill: '#fff' }, mk);
+  const outC = el('circle', { r: 0, fill: '#000' }, mk);
+  const g = el('g', { 'clip-path': `url(#${clipId})`, mask: `url(#${maskId})` }, parent);
+  if (fill) el('rect', { width: W, height: H, fill }, g);
+  return {
+    g,
+    set(inX, inY, inR, outX, outY, outR) {
+      inC.setAttribute('cx', inX); inC.setAttribute('cy', inY); inC.setAttribute('r', Math.max(0, inR));
+      outC.setAttribute('cx', outX); outC.setAttribute('cy', outY); outC.setAttribute('r', Math.max(0, outR));
+    },
+  };
+}
+
+function buildMark(parent) {
+  const g = el('g', {}, parent);
+  const inner = el('g', { transform: `translate(${-MX},${-MY})` }, g);
+  const clipId = id('arc');
+  const wedgeP = el('path', {}, el('clipPath', { id: clipId }, defs));
+  const circle = el('path', { d: LOGO.mark.circle, fill: C.yellow }, inner);
+  const arc = el('path', { d: LOGO.mark.arc, fill: C.orange, 'clip-path': `url(#${clipId})` }, inner);
+  const ch1 = el('path', { d: LOGO.mark.chop1, fill: C.orange }, inner);
+  const ch2 = el('path', { d: LOGO.mark.chop2, fill: C.orange }, inner);
+  return { g, circle, wedgeP, ch1, ch2 };
+}
+function setMark(m, o) {
+  m.g.setAttribute('transform', `translate(${o.x},${o.y}) rotate(${o.rot || 0}) scale(${o.s})`);
+  m.circle.setAttribute('transform', `translate(${MX},${MY}) scale(${Math.max(0, o.circle)}) translate(${-MX},${-MY})`);
+  m.wedgeP.setAttribute('d', wedge(MX, MY, 60, -45, o.arc * 360));
+  [[m.ch1, o.chop1], [m.ch2, o.chop2]].forEach(([p, v]) => {
+    const off = (1 - v) * 60;
+    p.setAttribute('transform', `translate(${off},${-off})`);
+    p.setAttribute('opacity', v > 0 ? clamp(v * 3) : 0);
+  });
+}
+
+// logotype 四個字，各自有遮罩，可以從下面「冒」上來
+function buildType(parent, extra = 0) {
+  const g = el('g', {}, parent);
+  const inner = el('g', { transform: 'translate(-131,-163)' }, g);
+  const ranges = [[126, 200], [212, 281], [294, 370], [377, 453]];
+  const chars = ranges.map(r => {
+    const clipId = id('tc');
+    el('rect', { x: r[0] - extra, y: 150 - extra, width: r[1] - r[0] + extra * 2, height: 100 + extra * 2 }, el('clipPath', { id: clipId }, defs));
+    const mv = el('g', {}, el('g', { 'clip-path': `url(#${clipId})` }, inner));
+    return { mv, dots: [], cx: (r[0] + r[1]) / 2, cy: 204 };
+  });
+  LOGO.type.forEach(p => {
+    const path = el('path', { d: p.d, fill: p.fill }, chars[p.c].mv);
+    if (p.dot) { path.style.transformBox = 'fill-box'; path.style.transformOrigin = 'center'; chars[p.c].dots.push(path); }
+  });
+  return { g, chars };
+}
+
+/* ---------------- 片頭 ---------------- */
+function buildIntro() {
+  const DUR = 4.6;
+  const yl = wipeLayer(svg, C.yellow), ol = wipeLayer(svg, C.orange), cl = wipeLayer(svg, C.cream);
+  const all = el('g', {}, cl.g);
+  const glow = el('circle', { fill: C.yellow, opacity: .16 }, all);
+  const ring = el('circle', { fill: 'none', stroke: C.orange }, all);
+  const r = rng(7);
+  const parts = Array.from({ length: 18 }, (_, i) => ({
+    a: r() * Math.PI * 2, d: 260 + r() * 300, s: 7 + r() * 16, delay: r() * .12,
+    fill: [C.yellow, C.orange, C.teal][i % 3],
+    node: el('circle', {}, all),
+  }));
+  const mark = buildMark(all);
+  const type = buildType(all);
+  // 最後構圖：mark 寬 240，間距 120，字寬約 951，整組置中
+  const FX = 424, TX = 664, TY = 540 - 41 * 3;
+
+  function renderAt(t) {
+    // 收尾：三層從 logo 中心挖洞往外擴，露出底下的影片
+    const ex = k => ease.inOutCubic(prog(t, 3.6 + k * .09, .75)) * 2000;
+    const cx = FX, cy = 540;
+    yl.set(cx, cy, 3000, cx, cy, ex(2));
+    ol.set(cx, cy, 3000, cx, cy, ex(1));
+    cl.set(cx, cy, 3000, cx, cy, ex(0));
+
+    const mv = ease.inOutExpo(prog(t, 1.3, .8));
+    const mx = lerp(960, FX, mv), ms = lerp(4.2, 3, mv);
+    const push = 1 + .025 * prog(t, 1.5, 2.1);
+    all.setAttribute('transform', `translate(960,540) scale(${push}) translate(-960,-540)`);
+
+    glow.setAttribute('cx', mx); glow.setAttribute('cy', 540);
+    glow.setAttribute('r', ease.outExpo(prog(t, .05, .9)) * lerp(430, 200, mv));
+    glow.setAttribute('opacity', .16 * (1 - mv * .5));
+
+    const rp = prog(t, .85, .75);
+    ring.setAttribute('cx', mx); ring.setAttribute('cy', 540);
+    ring.setAttribute('r', lerp(150, 760, ease.outExpo(rp)));
+    ring.setAttribute('stroke-width', lerp(22, 0, ease.outCubic(rp)));
+    ring.setAttribute('opacity', rp > 0 && rp < 1 ? 1 : 0);
+
+    parts.forEach(p => {
+      const k = prog(t, .85 + p.delay, 1.1), e = ease.outExpo(k);
+      p.node.setAttribute('cx', mx + Math.cos(p.a) * p.d * e);
+      p.node.setAttribute('cy', 540 + Math.sin(p.a) * p.d * e);
+      p.node.setAttribute('r', k > 0 ? p.s * (1 - ease.inCubic(k)) : 0);
+      p.node.setAttribute('fill', p.fill);
+    });
+
+    setMark(mark, {
+      x: mx, y: 540, s: ms, rot: lerp(-25, 0, ease.outExpo(prog(t, .05, 1.2))),
+      circle: ease.outBack(prog(t, .05, .5)),
+      arc: ease.outCubic(prog(t, .25, .6)),
+      chop1: ease.outExpo(prog(t, .7, .45)),
+      chop2: ease.outExpo(prog(t, .8, .45)),
+    });
+
+    type.g.setAttribute('transform', `translate(${TX + (1 - mv) * 40},${TY}) scale(3)`);
+    type.chars.forEach((c, i) => {
+      const v = ease.outExpo(prog(t, 1.55 + i * .09, .7));
+      c.mv.setAttribute('transform', `translate(0,${(1 - v) * 95})`);
+      c.dots.forEach((d, j) => {
+        const s = ease.outBack(prog(t, 1.95 + i * .09 + j * .05, .45));
+        d.style.transform = `scale(${Math.max(0, s)})`;
+      });
+    });
+  }
+  // 柔和版：音高壓低、起音放慢，整體再過低通和一點殘響
+  const NOTES = [262, 330, 392, 523];
+  const sfx = {
+    master: { lp: 5000, verb: .22 },
+    events: [
+      { t: .05, type: 'softpop', gain: .6 },
+      { t: .22, type: 'air', dur: .6, f0: 200, f1: 1200, gain: .4 },
+      { t: .74, type: 'thock', gain: .6 }, { t: .84, type: 'thock', pitch: 1.1, gain: .55 },
+      { t: .86, type: 'thump', gain: .55 },
+      { t: .92, type: 'mallet', freq: 784, gain: .18 }, { t: 1.02, type: 'mallet', freq: 659, gain: .14 },
+      { t: 1.25, type: 'air', dur: .7, f0: 150, f1: 900, gain: .35, pan: -.4 },
+      ...NOTES.map((f, i) => ({ t: 1.6 + i * .09, type: 'mallet', freq: f, gain: .45 })),
+      { t: 2.0, type: 'softpop', pitch: 1.4, gain: .3 },
+      { t: 2.08, type: 'pad', root: 261.63, dur: 2.4, gain: .5 },
+      { t: 3.5, type: 'air', dur: 1.0, f0: 150, f1: 1400, gain: .6 },
+    ],
+  };
+  return { DUR, renderAt, sfx };
+}
+
+/* ---------------- 章節轉場 ---------------- */
+function buildChapter() {
+  const DUR = 3.6;
+  const yl = wipeLayer(svg, C.yellow), ol = wipeLayer(svg, C.orange), cl = wipeLayer(svg, C.cream);
+  const all = el('g', {}, cl.g);
+
+  // 右側大號碼：黃色實心（60% 透明）墊底，橘色外框在上
+  const numClip = id('nc');
+  el('rect', { x: 1000, y: 180, width: 920, height: 720 }, el('clipPath', { id: numClip }, defs));
+  const numG = el('g', { 'clip-path': `url(#${numClip})` }, all);
+  const numStyle = { 'font-family': FONT, 'font-weight': 900, 'font-size': 480, 'text-anchor': 'end' };
+  const numFill = el('text', { ...numStyle, fill: C.yellow, 'fill-opacity': .6 }, numG);
+  const numLine = el('text', { ...numStyle, fill: 'none', stroke: C.orange, 'stroke-width': 7 }, numG);
+  numFill.textContent = numLine.textContent = P.num;
+
+  // 筷子：兩條斜線，跟 logomark 同方向
+  const chops = [[1180, 1010, 1940, 250], [1255, 1065, 2015, 305]].map(c =>
+    el('line', { x1: c[0], y1: c[1], x2: c[2], y2: c[3], stroke: C.orange, 'stroke-width': 26, 'stroke-linecap': 'round' }, all));
+
+  const mark = buildMark(all);
+  const lbClip = id('lb');
+  const lbRect = el('rect', { x: 270, y: 280, height: 80, width: 0 }, el('clipPath', { id: lbClip }, defs));
+  const label = el('text', { x: 280, y: 342, 'font-family': FONT, 'font-weight': 700, 'font-size': 36,
+    'letter-spacing': 10, fill: C.orange, 'clip-path': `url(#${lbClip})` }, all);
+  label.textContent = `CHAPTER ${P.num}`;
+
+  // 標題：逐字量寬，太長就自動縮小
+  const TXL = 200, BASE = 560, MAXW = 880;
+  let fs = 132;
+  const titleChars = [...P.title];
+  const measure = (ch, size) => {
+    const tmp = el('text', { 'font-family': FONT, 'font-weight': 900, 'font-size': size }, svg);
+    tmp.textContent = ch; const w = tmp.getComputedTextLength(); tmp.remove(); return w;
+  };
+  const gap = 6;
+  let widths = titleChars.map(ch => measure(ch, fs));
+  let total = widths.reduce((a, b) => a + b, 0) + gap * (titleChars.length - 1);
+  if (total > MAXW) { const k = MAXW / total; fs *= k; widths = widths.map(w => w * k); total = MAXW; }
+
+  const hlRect = el('rect', { x: TXL - 14, y: BASE - fs * .42, height: fs * .46, width: total + 28, fill: C.yellow, 'fill-opacity': .6 }, all);
+  const ttClip = id('tt');
+  el('rect', { x: 0, y: BASE - fs * 1.15, width: W, height: fs * 1.45 }, el('clipPath', { id: ttClip }, defs));
+  const ttG = el('g', { 'clip-path': `url(#${ttClip})` }, all);
+  let x = TXL;
+  const tNodes = titleChars.map((ch, i) => {
+    const n = el('text', { x, y: BASE, 'font-family': FONT, 'font-weight': 900, 'font-size': fs, fill: C.ink }, ttG);
+    n.textContent = ch; x += widths[i] + gap; return n;
+  });
+  const sub = el('text', { x: TXL, y: BASE + 100, 'font-family': FONT, 'font-weight': 500, 'font-size': 46, fill: C.sub }, all);
+  sub.textContent = P.sub;
+
+  function renderAt(t) {
+    // 進場：三層從左下角長進來；離場：從右上角挖洞
+    const inR = k => ease.outCubic(prog(t, k * .08, .62)) * 2300;
+    const outR = k => ease.inOutCubic(prog(t, 2.8 + k * .08, .65)) * 2300;
+    yl.set(0, H, inR(0), W, 0, outR(2));
+    ol.set(0, H, inR(1), W, 0, outR(1));
+    cl.set(0, H, inR(2), W, 0, outR(0));
+
+    const drift = prog(t, .9, 2.2);
+    const nv = ease.outExpo(prog(t, .3, 1));
+    numG.setAttribute('transform', `translate(0,${(1 - nv) * 560 - drift * 14})`);
+    numFill.setAttribute('x', 1800 + 16); numFill.setAttribute('y', 840 + 16 + (1 - ease.outExpo(prog(t, .38, 1))) * 200);
+    numLine.setAttribute('x', 1800); numLine.setAttribute('y', 840);
+
+    chops.forEach((c, i) => {
+      const v = ease.outExpo(prog(t, .42 + i * .08, .8)) - ease.inCubic(prog(t, 2.6 + i * .05, .45));
+      const off = (1 - v) * 900 + drift * 10;
+      c.setAttribute('transform', `translate(${off},${-off})`);
+    });
+
+    const exitUp = k => ease.inCubic(prog(t, 2.55 + k, .4));
+    setMark(mark, {
+      x: 222, y: 320 - exitUp(0) * 90, s: .8,
+      circle: ease.outBack(prog(t, .35, .45)),
+      arc: ease.outCubic(prog(t, .42, .5)),
+      chop1: ease.outExpo(prog(t, .62, .4)),
+      chop2: ease.outExpo(prog(t, .7, .4)),
+    });
+    mark.g.setAttribute('opacity', 1 - exitUp(0));
+    lbRect.setAttribute('width', ease.outExpo(prog(t, .55, .7)) * 520);
+    label.setAttribute('transform', `translate(0,${-exitUp(0) * 60})`);
+    label.setAttribute('opacity', 1 - exitUp(0));
+
+    tNodes.forEach((n, i) => {
+      const v = ease.outExpo(prog(t, .55 + i * .045, .7));
+      const o = exitUp(.04 + i * .025);
+      n.setAttribute('transform', `translate(${-drift * 12},${(1 - v) * fs * 1.2 - o * fs * 1.3})`);
+    });
+    const hv = ease.outExpo(prog(t, .9, .6)), ho = ease.inCubic(prog(t, 2.62, .35));
+    hlRect.setAttribute('transform', `translate(${TXL - 14 - drift * 12},0) scale(${hv * (1 - ho)},1) translate(${-(TXL - 14)},0)`);
+
+    const sv = ease.outExpo(prog(t, 1.0, .7));
+    sub.setAttribute('opacity', sv * (1 - exitUp(.1)));
+    sub.setAttribute('transform', `translate(${-drift * 12},${(1 - sv) * 30 - exitUp(.1) * 40})`);
+  }
+  return { DUR, renderAt };
+}
+
+/* ---------------- 斜切（筷子方向）共用工具 ---------------- */
+// 把畫面上每一點投影到「往右上」的方向，範圍大約 -764 到 1358
+const DMIN = -764, DMAX = 1358;
+function stripe(a, b) {
+  const s = Math.SQRT1_2, L = 3000;
+  const pt = (p, m) => `${(p * s + m * s).toFixed(1)},${(-p * s + m * s).toFixed(1)}`;
+  return `${pt(a, -L)} ${pt(b, -L)} ${pt(b, L)} ${pt(a, L)}`;
+}
+// 只在投影值 lo 到 hi 之間顯示的群組
+function diagLayer(parent) {
+  const maskId = id('dm');
+  const mk = el('mask', { id: maskId, maskUnits: 'userSpaceOnUse', x: 0, y: 0, width: W, height: H }, defs);
+  const poly = el('polygon', { fill: '#fff' }, mk);
+  const g = el('g', { mask: `url(#${maskId})` }, parent);
+  return { g, set(lo, hi) { poly.setAttribute('points', stripe(lo, hi)); } };
+}
+function bands(parent, colors) {
+  return colors.map(c => el('polygon', { fill: c }, parent));
+}
+function measureChars(chars, size) {
+  return chars.map(ch => {
+    const tmp = el('text', { 'font-family': FONT, 'font-weight': 900, 'font-size': size }, svg);
+    tmp.textContent = ch; const w = tmp.getComputedTextLength(); tmp.remove(); return w;
+  });
+}
+// 依最大寬度自動縮字，回傳每個字的 x 位置
+function layoutTitle(text, size, maxW, gap = 6) {
+  const chars = [...text];
+  let widths = measureChars(chars, size);
+  let total = widths.reduce((a, b) => a + b, 0) + gap * (chars.length - 1);
+  if (total > maxW) { const k = maxW / total; size *= k; widths = widths.map(w => w * k); total = maxW; }
+  let x = 0;
+  const xs = widths.map(w => { const v = x; x += w + gap; return v; });
+  return { chars, size, widths, xs, total };
+}
+
+/* ---------------- 片頭 B：滾輪 ---------------- */
+// logomark 像行李輪子一樣滾進來，字從上面掉下來彈跳，最後用斜切帶離場
+function buildIntro2() {
+  const DUR = 4.6, BW = 170;
+  const content = diagLayer(svg);
+  el('rect', { width: W, height: H, fill: C.cream }, content.g);
+  const all = el('g', {}, content.g);
+  const ground = el('line', { y1: 540 + 140, y2: 540 + 140, stroke: C.orange, 'stroke-width': 6, 'stroke-linecap': 'round' }, all);
+  const dust = Array.from({ length: 6 }, (_, i) => el('circle', { fill: i % 2 ? C.yellow : C.orange }, all));
+  const mark = buildMark(all);
+  const type = buildType(all, 220);
+  const outBands = bands(svg, [C.teal, C.orange, C.yellow]);
+  const FX = 424, TX = 664, TY = 540 - 41 * 3, R = 38 * 3;
+  const LAND = .95;
+
+  function renderAt(t) {
+    const ex = ease.inOutCubic(prog(t, 3.55, .95));
+    const p = lerp(DMIN - 10, DMAX + BW * 3 + 10, ex);
+    content.set(p, 9999);
+    outBands.forEach((b, i) => b.setAttribute('points', stripe(p - BW * (i + 1), p - BW * i)));
+
+    const rv = ease.outCubic(prog(t, 0, LAND));
+    const x = lerp(-260, FX, rv);
+    const squash = Math.sin(clamp((t - LAND) / .35) * Math.PI) * Math.exp(-(t - LAND) * 4) * (t > LAND ? 1 : 0);
+    const rot = -((FX - x) / R) * 180 / Math.PI;
+    setMark(mark, { x, y: 540, s: 3, rot, circle: 1, arc: 1, chop1: 1, chop2: 1 });
+    mark.g.setAttribute('transform', `translate(${x},${540 + squash * 10}) rotate(${rot}) scale(${3 * (1 + squash * .1)},${3 * (1 - squash * .1)})`);
+
+    const gv = ease.outCubic(prog(t, 0, LAND)), gOut = ease.inCubic(prog(t, 1.2, .5));
+    ground.setAttribute('x1', lerp(-260, FX, gOut));
+    ground.setAttribute('x2', lerp(-260, FX + 40, gv));
+    ground.setAttribute('opacity', 1 - gOut);
+    dust.forEach((d, i) => {
+      const k = prog(t, LAND, .6), dir = i < 3 ? -1 : 1, j = i % 3;
+      d.setAttribute('cx', FX + dir * (60 + ease.outExpo(k) * (80 + j * 50)));
+      d.setAttribute('cy', 540 + 130 - ease.outExpo(k) * (30 + j * 25) + k * k * 60);
+      d.setAttribute('r', k > 0 ? (9 - j * 2) * (1 - k) : 0);
+    });
+
+    type.g.setAttribute('transform', `translate(${TX},${TY}) scale(3)`);
+    type.chars.forEach((c, i) => {
+      const k = prog(t, 1.15 + i * .12, .8);
+      const y = (1 - ease.outBounce(k)) * -150;
+      c.mv.setAttribute('transform', `translate(0,${k > 0 ? y : -400})`);
+      c.dots.forEach((d, j) => d.style.transform = `scale(${Math.max(0, ease.outBack(prog(t, 2.15 + i * .07 + j * .04, .4)))})`);
+    });
+    all.setAttribute('transform', `translate(960,540) scale(${1 + .02 * prog(t, 2, 1.6)}) translate(-960,-540)`);
+  }
+  // outBounce 第一次落地大約在 36% 的位置
+  const land = i => 1.15 + i * .12 + .8 * .364;
+  const sfx = [
+    { t: 0, type: 'whoosh', dur: .9, f0: 150, f1: 900, gain: .55, pan: -.6 },
+    { t: LAND - .02, type: 'impact', gain: .55 }, { t: LAND, type: 'knock', pitch: .8 },
+    ...[0, 1, 2, 3].flatMap(i => [
+      { t: land(i), type: 'knock', pitch: .9 + i * .08, gain: .8 },
+      { t: land(i) + .8 * .32, type: 'knock', pitch: 1.1 + i * .08, gain: .3 },
+    ]),
+    { t: 2.15, type: 'pop', pitch: 1.6, gain: .5 }, { t: 2.25, type: 'chime', gain: .75, root: 587.33 },
+    { t: 3.5, type: 'whoosh', dur: 1.0, f0: 250, f1: 4500, gain: .9, pan: .3 },
+  ];
+  return { DUR, renderAt, sfx };
+}
+
+/* ---------------- 片頭 C：斜切 + 直式 ---------------- */
+// 三條斜帶刷進來，logomark 旋轉縮進中間，字一個個彈出，最後整組往鏡頭衝過去
+function buildIntro3() {
+  const DUR = 4.6, BW = 160;
+  const enter = diagLayer(svg);
+  const cream = wipeLayer(enter.g, C.cream);
+  const all = el('g', {}, cream.g);
+  const ring = el('circle', { fill: 'none', stroke: C.orange }, all);
+  const mark = buildMark(all);
+  const type = buildType(all, 60);
+  const bar = el('rect', { y: 0, height: 14, rx: 7, fill: C.yellow, 'fill-opacity': .6 }, all);
+  const inBands = bands(svg, [C.orange, C.yellow, C.teal]);
+  const MXs = 960, MYs = 390, TS = 2.4, TW = 317 * TS, TX = 960 - TW / 2, TY = 560;
+
+  function renderAt(t) {
+    const ev = ease.inOutCubic(prog(t, 0, .75));
+    const p = lerp(DMIN - BW * 3 - 10, DMAX + 10, ev);
+    enter.set(-9999, p);
+    inBands.forEach((b, i) => b.setAttribute('points', stripe(p + BW * i, p + BW * (i + 1))));
+
+    const hole = ease.inOutCubic(prog(t, 3.75, .75)) * 1200;
+    cream.set(960, 540, 3000, 960, 540, hole);
+    const zoom = ease.inExpo(prog(t, 3.5, .7));
+    all.setAttribute('transform', `translate(960,540) scale(${1 + zoom * 4}) translate(-960,-540)`);
+    all.setAttribute('opacity', 1 - prog(t, 3.85, .3));
+
+    const mv = ease.outExpo(prog(t, .45, .9));
+    setMark(mark, {
+      x: MXs, y: MYs, s: lerp(9, 3.2, mv), rot: lerp(140, 0, mv),
+      circle: 1, arc: 1, chop1: ease.outExpo(prog(t, .8, .4)), chop2: ease.outExpo(prog(t, .88, .4)),
+    });
+    mark.g.setAttribute('opacity', clamp(prog(t, .45, .15)));
+
+    const rp = prog(t, .78, .7);
+    ring.setAttribute('cx', MXs); ring.setAttribute('cy', MYs);
+    ring.setAttribute('r', lerp(130, 620, ease.outExpo(rp)));
+    ring.setAttribute('stroke-width', lerp(18, 0, ease.outCubic(rp)));
+    ring.setAttribute('opacity', rp > 0 && rp < 1 ? 1 : 0);
+
+    type.g.setAttribute('transform', `translate(${TX},${TY}) scale(${TS})`);
+    type.chars.forEach((c, i) => {
+      const v = Math.max(0, ease.outBack(prog(t, 1.05 + i * .1, .5)));
+      const r = lerp(-20, 0, ease.outCubic(prog(t, 1.05 + i * .1, .5)));
+      c.mv.setAttribute('transform', `translate(${c.cx},${c.cy}) scale(${v}) rotate(${r}) translate(${-c.cx},${-c.cy})`);
+      c.dots.forEach((d, j) => d.style.transform = `scale(${Math.max(0, ease.outBack(prog(t, 1.55 + i * .06 + j * .04, .4)))})`);
+    });
+    const bv = ease.outExpo(prog(t, 1.5, .7));
+    bar.setAttribute('x', 960 - (TW / 2 + 30) * bv);
+    bar.setAttribute('width', (TW + 60) * bv);
+    bar.setAttribute('y', TY + 82 * TS + 34);
+  }
+  const NOTES = [659, 784, 988, 1319];
+  const sfx = [
+    { t: 0, type: 'whoosh', dur: .8, f0: 300, f1: 5000, gain: .8, pan: .2 },
+    { t: .42, type: 'riser', dur: .4, gain: .5 },
+    { t: .8, type: 'impact', gain: .75 }, { t: .82, type: 'knock' }, { t: .9, type: 'knock', pitch: 1.12 },
+    ...NOTES.map((f, i) => ({ t: 1.08 + i * .1, type: 'pop', pitch: 1 + i * .25, gain: .6 })),
+    { t: 1.5, type: 'sparkle', gain: .6, dur: .5 }, { t: 1.6, type: 'chime', gain: .75, root: 659.25 },
+    { t: 3.15, type: 'riser', dur: .55, gain: .6 }, { t: 3.6, type: 'whoosh', dur: .9, f0: 200, f1: 3000, gain: 1 },
+  ];
+  return { DUR, renderAt, sfx };
+}
+
+/* ---------------- 章節 B：只有標題，置中全畫面 ---------------- */
+function buildChapter2() {
+  // hold：標題停留時間額外加幾秒（離場動畫和離場音效一起往後延）
+  const HOLD = Math.max(0, +P.hold || 0);
+  const DUR = 3.6 + HOLD, BW = 150, HAS_SUB = !!P.sub;
+  const enter = diagLayer(svg);
+  const exit = diagLayer(enter.g);
+  el('rect', { width: W, height: H, fill: C.cream }, exit.g);
+  const all = el('g', {}, exit.g);
+  const inBands = bands(svg, [C.orange, C.yellow]);
+  const outBands = bands(svg, [C.yellow, C.orange]);
+
+  const mark = buildMark(all);
+  const L = layoutTitle(P.title, 150, 1400, 8);
+  const BASE = HAS_SUB ? 600 : 650, X0 = 960 - L.total / 2, MARK_Y = BASE - 250;
+  const lines = [0, 1].map(() => el('line', { stroke: C.orange, 'stroke-width': 8, 'stroke-linecap': 'round' }, all));
+  const hl = el('rect', { y: BASE - L.size * .42, height: L.size * .46, fill: C.yellow, 'fill-opacity': .6 }, all);
+  const clipId = id('t2');
+  el('rect', { x: 0, y: BASE - L.size * 1.15, width: W, height: L.size * 1.45 }, el('clipPath', { id: clipId }, defs));
+  const tg = el('g', { 'clip-path': `url(#${clipId})` }, all);
+  const nodes = L.chars.map((ch, i) => {
+    const n = el('text', { x: X0 + L.xs[i], y: BASE, 'font-family': FONT, 'font-weight': 900, 'font-size': L.size, fill: C.ink }, tg);
+    n.textContent = ch; return n;
+  });
+  // 副標：置中一行，太長就縮小
+  const sub = el('text', { x: 960, y: BASE + 125, 'text-anchor': 'middle', 'font-family': FONT, 'font-weight': 700,
+    'font-size': 60, fill: C.sub, 'letter-spacing': 4 }, all);
+  sub.textContent = P.sub;
+  if (HAS_SUB) {
+    const sw = sub.getComputedTextLength();
+    if (sw > 1500) sub.setAttribute('font-size', 60 * 1500 / sw);
+  }
+
+  function renderAt(realT) {
+    // 進場照原本時間跑，2.4 秒之後先停住 HOLD 秒，再接著離場
+    const t = realT < 2.4 ? realT : Math.max(2.4, realT - HOLD);
+    const ev = ease.inOutCubic(prog(t, 0, .7));
+    const p = lerp(DMIN - BW * 2 - 10, DMAX + 10, ev);
+    enter.set(-9999, p);
+    inBands.forEach((b, i) => b.setAttribute('points', stripe(p + BW * i, p + BW * (i + 1))));
+    const xv = ease.inOutCubic(prog(t, 2.85, .7));
+    const q = lerp(DMIN - 10, DMAX + BW * 2 + 10, xv);
+    exit.set(q, 9999);
+    outBands.forEach((b, i) => b.setAttribute('points', stripe(q - BW * (i + 1), q - BW * i)));
+
+    const up = k => ease.inCubic(prog(t, 2.55 + k, .4));
+    setMark(mark, {
+      x: 960, y: MARK_Y - up(0) * 80, s: 1.3,
+      circle: ease.outBack(prog(t, .4, .45)), arc: ease.outCubic(prog(t, .48, .5)),
+      chop1: ease.outExpo(prog(t, .7, .4)), chop2: ease.outExpo(prog(t, .78, .4)),
+    });
+    mark.g.setAttribute('opacity', 1 - up(0));
+
+    const drift = prog(realT, .9, 2.2 + HOLD) * 8;
+    nodes.forEach((n, i) => {
+      const v = ease.outExpo(prog(t, .6 + i * .05, .7));
+      n.setAttribute('transform', `translate(0,${(1 - v) * L.size * 1.2 - up(.04 + i * .025) * L.size * 1.3 - drift})`);
+    });
+    const hv = ease.outExpo(prog(t, .95, .6)) * (1 - ease.inCubic(prog(t, 2.6, .3)));
+    hl.setAttribute('x', 960 - (L.total / 2 + 16) * hv);
+    hl.setAttribute('width', (L.total + 32) * hv);
+    hl.setAttribute('transform', `translate(0,${-drift})`);
+
+    const lv = ease.outExpo(prog(t, 1.0, .7)) * (1 - ease.inCubic(prog(t, 2.55, .35)));
+    const ly = BASE - L.size * .36 - drift;
+    [[X0 - 50, -1], [X0 + L.total + 50, 1]].forEach(([sx, dir], i) => {
+      const ln = lines[i];
+      ln.setAttribute('x1', sx); ln.setAttribute('x2', sx + dir * 150 * lv);
+      ln.setAttribute('y1', ly); ln.setAttribute('y2', ly);
+      ln.setAttribute('opacity', lv > .01 ? 1 : 0);
+    });
+
+    const sv = ease.outExpo(prog(t, 1.15, .7)), so = up(.12);
+    sub.setAttribute('opacity', sv * (1 - so));
+    sub.setAttribute('transform', `translate(0,${(1 - sv) * 30 - so * 50 - drift})`);
+  }
+  const SETS = {
+    // 候選 1「輕刷」：只有紙張滑過的風聲和一下悶悶的木頭聲
+    1: { master: { lp: 4500, verb: .15 }, events: [
+      { t: 0, type: 'air', dur: .8, f0: 180, f1: 1100, gain: .6 },
+      { t: .42, type: 'softpop', pitch: .9, gain: .35 },
+      { t: .72, type: 'thock', gain: .45 },
+      { t: 2.8, type: 'air', dur: .85, f0: 1000, f1: 200, gain: .5 },
+    ] },
+    // 候選 2「木琴」：風聲放輕，加三個圓圓的木琴音（離場只留風聲）
+    2: { master: { lp: 4500, verb: .25 }, events: [
+      { t: 0, type: 'air', dur: .8, f0: 180, f1: 1000, gain: .35 },
+      { t: .45, type: 'mallet', freq: 330, gain: .45 }, { t: .62, type: 'mallet', freq: 392, gain: .45 },
+      { t: .9, type: 'mallet', freq: 523, gain: .4 },
+      { t: 2.85, type: 'air', dur: .8, f0: 900, f1: 200, gain: .3 },
+    ] },
+    // 候選 3「暖墊」：一個慢慢浮上來的和弦，加一下很輕的低音
+    3: { master: { lp: 3500, verb: .3 }, events: [
+      { t: 0, type: 'pad', root: 130.81, dur: 3.2, attack: .5, gain: .55 },
+      { t: .05, type: 'air', dur: .8, f0: 150, f1: 700, gain: .3 },
+      { t: .7, type: 'thump', gain: .45 },
+      { t: 2.85, type: 'air', dur: .8, f0: 700, f1: 150, gain: .35 },
+    ] },
+    // 候選 4「拇指琴」：薄薄的風聲加上輕快往上撥的三個音，離場往下撥兩個音
+    4: { master: { lp: 5000, verb: .2 }, events: [
+      { t: 0, type: 'breeze', dur: .7, f0: 500, f1: 1800, gain: .4 },
+      { t: .45, type: 'kalimba', freq: 523, gain: .5 }, { t: .56, type: 'kalimba', freq: 659, gain: .45 },
+      { t: .67, type: 'kalimba', freq: 784, gain: .45 },
+      { t: 2.6, type: 'kalimba', freq: 784, gain: .3 }, { t: 2.7, type: 'kalimba', freq: 587, gain: .3 },
+      { t: 2.85, type: 'breeze', dur: .7, f0: 1800, f1: 500, gain: .35 },
+    ] },
+    // 候選 5「微光」：高一個八度、很淡的和弦像光暈一樣浮著，配一個輕輕的拇指琴音
+    5: { master: { lp: 5000, verb: .3 }, events: [
+      { t: 0, type: 'breeze', dur: .7, f0: 600, f1: 1600, gain: .45 },
+      { t: .1, type: 'pad', root: 523.25, dur: 2.9, attack: .4, lp: 3200, gain: .55 },
+      { t: .72, type: 'kalimba', freq: 1047, gain: .45 },
+      { t: 2.85, type: 'breeze', dur: .7, f0: 1600, f1: 600, gain: .45 },
+    ] },
+  };
+  const set = SETS[P.sfx];
+  const sfx = set ? { ...set, events: set.events.map(e => e.t >= 2.4 ? { ...e, t: e.t + HOLD } : e) } : [];
+  return { DUR, renderAt, sfx };
+}
+
+/* ---------------- 章節 C：只有標題，膠囊疊在影片上 ---------------- */
+// logomark 放在米色圓章裡彈出，往右拉出一條膠囊放標題，影片畫面保持看得到
+function buildChapter3() {
+  const DUR = 3.6;
+  const fx = id('sh');
+  const f = el('filter', { id: fx, x: '-20%', y: '-40%', width: '140%', height: '180%' }, defs);
+  el('feDropShadow', { dx: 0, dy: 8, stdDeviation: 16, 'flood-color': '#000', 'flood-opacity': .28 }, f);
+
+  const scrim = el('rect', { width: W, height: H, fill: '#000' }, svg);
+  const L = layoutTitle(P.title, 104, 1150, 4);
+  const BR = 112, PH = 176, PAD_L = BR + 44, PAD_R = 70;
+  const pillW = PAD_L + L.total + PAD_R;
+  const total = BR + pillW;
+  const MX0 = (W - total) / 2 + BR, CY = 540;
+
+  const pill = el('rect', { y: CY - PH / 2, height: PH, rx: PH / 2, fill: C.cream, filter: `url(#${fx})` }, svg);
+  const clipId = id('pc');
+  const pclip = el('rect', { y: CY - PH / 2, height: PH, rx: PH / 2 }, el('clipPath', { id: clipId }, defs));
+  const tg = el('g', { 'clip-path': `url(#${clipId})` }, svg);
+  const BASE = CY + L.size * .36;
+  const hl = el('rect', { x: MX0 + PAD_L - 10, y: BASE - L.size * .4, height: L.size * .44, fill: C.yellow, 'fill-opacity': .6 }, tg);
+  const nodes = L.chars.map((ch, i) => {
+    const n = el('text', { x: MX0 + PAD_L + L.xs[i], y: BASE, 'font-family': FONT, 'font-weight': 900, 'font-size': L.size, fill: C.ink }, tg);
+    n.textContent = ch; return n;
+  });
+  const badge = el('circle', { cx: MX0, cy: CY, r: BR, fill: C.cream, filter: `url(#${fx})` }, svg);
+  const mark = buildMark(svg);
+
+  function renderAt(t) {
+    scrim.setAttribute('opacity', .3 * ease.outCubic(prog(t, 0, .4)) * (1 - prog(t, 3.1, .45)));
+    const bIn = ease.outBack(prog(t, 0, .5)), bOut = ease.inCubic(prog(t, 3.1, .35));
+    badge.setAttribute('r', Math.max(0, BR * bIn * (1 - bOut)));
+    setMark(mark, {
+      x: MX0, y: CY, s: 2.15 * (1 - bOut), rot: lerp(-60, 0, ease.outExpo(prog(t, .05, .8))),
+      circle: ease.outBack(prog(t, .08, .45)), arc: ease.outCubic(prog(t, .15, .5)),
+      chop1: ease.outExpo(prog(t, .4, .4)), chop2: ease.outExpo(prog(t, .48, .4)),
+    });
+
+    const pv = ease.outExpo(prog(t, .45, .7)) * (1 - ease.inOutCubic(prog(t, 2.75, .4)));
+    const w = Math.max(0, BR + (pillW - BR) * pv);
+    [pill, pclip].forEach(r => { r.setAttribute('x', MX0); r.setAttribute('width', w); });
+    pill.setAttribute('opacity', pv > .001 ? 1 : 0);
+
+    nodes.forEach((n, i) => {
+      const v = ease.outExpo(prog(t, .65 + i * .05, .7));
+      const o = ease.inCubic(prog(t, 2.5 + i * .025, .35));
+      n.setAttribute('transform', `translate(0,${(1 - v) * L.size * 1.3 + o * L.size * 1.3})`);
+    });
+    const hv = ease.outExpo(prog(t, 1.0, .6)) * (1 - ease.inCubic(prog(t, 2.5, .3)));
+    hl.setAttribute('width', (L.total + 20) * hv);
+  }
+  return { DUR, renderAt, sfx: [] };
+}
+
+/* ---------------- 片頭 D：上下排列 ---------------- */
+// 餅從上面掉進來彈兩下，碗邊轉一圈畫出來，字從中間往兩邊展開，最後整片像捲簾往上拉走
+function buildIntro4() {
+  const DUR = 4.6, BH = 70;
+  const curtain = el('g', {}, svg);
+  el('rect', { width: W, height: H, fill: C.cream }, curtain);
+  el('rect', { y: H, width: W, height: BH, fill: C.orange }, curtain);
+  el('rect', { y: H + BH, width: W, height: BH, fill: C.yellow }, curtain);
+  const all = el('g', {}, curtain);
+  const shadow = el('ellipse', { fill: C.orange, 'fill-opacity': .14 }, all);
+  const mark = buildMark(all);
+  const TS = 2.4, TW = 317 * TS, TX = 960 - TW / 2, TY = 585, MXs = 960, MYs = 405;
+  const clipId = id('dc');
+  const clipR = el('rect', { y: TY - 30, height: 82 * TS + 60 }, el('clipPath', { id: clipId }, defs));
+  const typeWrap = el('g', { 'clip-path': `url(#${clipId})` }, all);
+  const type = buildType(typeWrap, 60);
+  const bar = el('rect', { height: 12, rx: 6, fill: C.yellow, 'fill-opacity': .6 }, all);
+
+  function renderAt(t) {
+    const up = ease.inOutCubic(prog(t, 3.55, .95));
+    curtain.setAttribute('transform', `translate(0,${-up * (H + BH * 2 + 10)})`);
+
+    const drop = ease.outBounce(prog(t, 0, .75));
+    const y = lerp(-250, MYs, drop);
+    const spin = ease.outCubic(prog(t, .6, .7));
+    setMark(mark, {
+      x: MXs, y, s: 3.2, rot: lerp(-200, 0, spin),
+      circle: 1, arc: spin, chop1: ease.outExpo(prog(t, 1.05, .45)), chop2: ease.outExpo(prog(t, 1.15, .45)),
+    });
+    const sh = clamp(1 - (MYs - y) / 600) * (1 - prog(t, 1.1, .4));
+    shadow.setAttribute('cx', MXs); shadow.setAttribute('cy', MYs + 150);
+    shadow.setAttribute('rx', 110 * sh); shadow.setAttribute('ry', 18 * sh);
+
+    const rv = ease.outExpo(prog(t, 1.35, .9));
+    clipR.setAttribute('x', 960 - (TW / 2 + 40) * rv);
+    clipR.setAttribute('width', (TW + 80) * rv);
+    type.g.setAttribute('transform', `translate(${TX},${TY + (1 - rv) * 24}) scale(${TS})`);
+    type.chars.forEach((c, i) => c.dots.forEach((d, j) =>
+      d.style.transform = `scale(${Math.max(0, ease.outBack(prog(t, 1.9 + i * .06 + j * .04, .4)))})`));
+    const bv = ease.outExpo(prog(t, 1.65, .7));
+    bar.setAttribute('x', 960 - (TW / 2 + 30) * bv);
+    bar.setAttribute('width', (TW + 60) * bv);
+    bar.setAttribute('y', TY + 82 * TS + 34);
+  }
+  const sfx = {
+    master: { lp: 5000, verb: .22 },
+    events: [
+      { t: .27, type: 'thock', pitch: .8, gain: .7 }, { t: .55, type: 'thock', pitch: .8, gain: .3 },
+      { t: .68, type: 'thock', pitch: .8, gain: .12 },
+      { t: .6, type: 'air', dur: .7, f0: 200, f1: 1000, gain: .35 },
+      { t: 1.07, type: 'thock', gain: .55 }, { t: 1.17, type: 'thock', pitch: 1.1, gain: .5 },
+      { t: 1.32, type: 'air', dur: .6, f0: 250, f1: 900, gain: .3 },
+      ...[330, 392, 523].map((f, i) => ({ t: 1.38 + i * .1, type: 'mallet', freq: f, gain: .45 })),
+      { t: 1.92, type: 'softpop', pitch: 1.4, gain: .3 },
+      { t: 2.0, type: 'pad', root: 261.63, dur: 2.4, gain: .5 },
+      { t: 3.5, type: 'air', dur: 1.0, f0: 150, f1: 1300, gain: .55 },
+    ],
+  };
+  return { DUR, renderAt, sfx };
+}
+
+/* ---------------- 片頭 E：左右排列 ---------------- */
+// 整個畫面的黃色縮成餅，畫好碗和筷子後往左移，字從 logo 後面拉出來，最後用直條往右刷走
+function buildIntro5() {
+  const DUR = 4.6, BW = 150;
+  const content = el('g', {}, svg);
+  const clipId = id('ec');
+  const clipR = el('rect', { y: 0, height: H }, el('clipPath', { id: clipId }, defs));
+  content.setAttribute('clip-path', `url(#${clipId})`);
+  el('rect', { width: W, height: H, fill: C.cream }, content);
+  const all = el('g', {}, content);
+  const big = el('circle', { fill: C.yellow }, all);
+  const tclipId = id('et');
+  const tclip = el('rect', { y: 0, height: H, width: W * 2 }, el('clipPath', { id: tclipId }, defs));
+  const type = buildType(el('g', { 'clip-path': `url(#${tclipId})` }, all));
+  const mark = buildMark(all);
+  const outBars = [C.teal, C.orange, C.yellow].map(c => el('rect', { y: 0, height: H, width: BW, fill: c }, svg));
+  const FX = 424, TX = 664, TY = 540 - 41 * 3, TW = 317 * 3, CR = 26.5 * 3;
+
+  function renderAt(t) {
+    const ex = ease.inOutCubic(prog(t, 3.55, .95));
+    const p = lerp(0, W + BW * 3, ex);
+    clipR.setAttribute('x', p); clipR.setAttribute('width', W + 10);
+    outBars.forEach((b, i) => b.setAttribute('x', p - BW * (i + 1)));
+
+    const sv = ease.inOutCubic(prog(t, 0, .65));
+    big.setAttribute('cx', 960); big.setAttribute('cy', 540);
+    big.setAttribute('r', lerp(1150, CR, sv));
+    big.setAttribute('opacity', t < .65 ? 1 : 0);
+
+    const mv = ease.inOutExpo(prog(t, 1.25, .8));
+    const mx = lerp(960, FX, mv);
+    setMark(mark, {
+      x: mx, y: 540, s: 3, rot: lerp(90, 0, ease.outCubic(prog(t, .55, .6))),
+      circle: t < .65 ? 0 : 1, arc: ease.outCubic(prog(t, .55, .55)),
+      chop1: ease.outExpo(prog(t, .95, .45)), chop2: ease.outExpo(prog(t, 1.03, .45)),
+    });
+
+    const tv = ease.outExpo(prog(t, 1.4, .95));
+    tclip.setAttribute('x', mx + 120);
+    type.g.setAttribute('transform', `translate(${lerp(960 + 120 - TW - 20, TX, tv)},${TY}) scale(3)`);
+    type.chars.forEach((c, i) => c.dots.forEach((d, j) =>
+      d.style.transform = `scale(${Math.max(0, ease.outBack(prog(t, 2.05 + i * .07 + j * .04, .4)))})`));
+  }
+  const sfx = {
+    master: { lp: 5000, verb: .22 },
+    events: [
+      { t: 0, type: 'air', dur: .7, f0: 900, f1: 180, gain: .45 },
+      { t: .6, type: 'softpop', gain: .5 },
+      { t: .55, type: 'air', dur: .55, f0: 200, f1: 1100, gain: .3 },
+      { t: .97, type: 'thock', gain: .55 }, { t: 1.05, type: 'thock', pitch: 1.1, gain: .5 },
+      { t: 1.25, type: 'air', dur: .9, f0: 150, f1: 800, gain: .35, pan: -.3 },
+      ...[262, 392, 523].map((f, i) => ({ t: 1.45 + i * .12, type: 'mallet', freq: f, gain: .45, pan: .3 })),
+      { t: 2.07, type: 'softpop', pitch: 1.4, gain: .3 },
+      { t: 2.15, type: 'pad', root: 261.63, dur: 2.3, gain: .5 },
+      { t: 3.5, type: 'air', dur: 1.0, f0: 150, f1: 1300, gain: .55, pan: .4 },
+    ],
+  };
+  return { DUR, renderAt, sfx };
+}
+
+/* ---------------- 播放與輸出 ---------------- */
+let scene;
+async function build() {
+  await document.fonts.load(`900 100px ${FONT}`);
+  svg.innerHTML = ''; uid = 0;
+  defs = el('defs', {}, svg);
+  scene = ({ intro: buildIntro, intro2: buildIntro2, intro3: buildIntro3, intro4: buildIntro4, intro5: buildIntro5, chapter: buildChapter, chapter2: buildChapter2, chapter3: buildChapter3 }[P.scene] || buildIntro)();
+  window.SFX = scene.sfx || [];
+  window.DUR = scene.DUR;
+  window.renderAt = scene.renderAt;
+  scene.renderAt(0);
+  window.READY = true;
+}
+
+const $ = s => document.getElementById(s);
+let t0 = performance.now(), playing = true, cur = 0;
+function tick(now) {
+  if (scene && playing) {
+    cur = ((now - t0) / 1000) % (scene.DUR + .6);
+    scene.renderAt(Math.min(cur, scene.DUR));
+    $('scrub').value = Math.min(cur, scene.DUR) / scene.DUR;
+    $('time').textContent = `${Math.min(cur, scene.DUR).toFixed(2)} / ${scene.DUR.toFixed(2)}`;
+  }
+  requestAnimationFrame(tick);
+}
+
+if (!P.render) {
+  $('scene').value = P.scene; $('num').value = P.num; $('title').value = P.title; $('sub').value = P.sub;
+  $('play').onclick = () => {
+    playing = !playing; $('play').textContent = playing ? '暫停' : '播放';
+    if (playing) t0 = performance.now() - cur * 1000;
+  };
+  $('scrub').oninput = e => {
+    playing = false; $('play').textContent = '播放';
+    cur = e.target.value * scene.DUR; scene.renderAt(cur);
+    $('time').textContent = `${cur.toFixed(2)} / ${scene.DUR.toFixed(2)}`;
+  };
+  ['scene', 'num', 'title', 'sub'].forEach(k => $(k).addEventListener('change', () => {
+    P[k] = $(k).value; t0 = performance.now(); build();
+  }));
+  $('bgsel').onchange = e => { $('sample').className = e.target.value === 'checker' ? 'checker' : ''; };
+  build().then(() => requestAnimationFrame(tick));
+} else {
+  build();
+}
+</script>
+</body>
+</html>
