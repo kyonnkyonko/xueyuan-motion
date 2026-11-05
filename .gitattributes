@@ -1,0 +1,6 @@
+# Windows 用的檔案保留原本的 CRLF 換行和 BOM，不讓 git 轉換
+*.bat -text
+*.ps1 -text
+# Mac 腳本一定要 LF
+*.command text eol=lf
+*.jpg binary

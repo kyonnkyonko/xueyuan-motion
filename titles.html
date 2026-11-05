@@ -21,6 +21,13 @@
 
   #scene { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden; }
   #bg { position: absolute; inset: 0; background: url(textures/Paper002.jpg) center / cover; filter: brightness(.88) saturate(.9); }
+  /* 筆記本內頁背景：左邊的孔、紅色邊線、藍色橫線 */
+  .nb { position: absolute; inset: 0;
+    background: radial-gradient(circle at 70px 50%, #d9cfbf 0 17px, transparent 18px) 0 0 / 140px 110px repeat-y,
+      linear-gradient(90deg, transparent 230px, rgba(214,70,60,.45) 230px 234px, transparent 234px),
+      repeating-linear-gradient(180deg, transparent 0 58px, rgba(90,140,190,.32) 58px 61px),
+      url(textures/Paper001.jpg) 0 0 / 1100px auto, #fffdf7; }
+  .nb::after { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(60, 40, 10, .18) 100%); }
   #bg::after { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(40, 28, 10, .35) 100%); }
 
   /* 一張紙片：外層負責位置和陰影，裡面是白色毛邊和紙面 */
@@ -59,7 +66,7 @@
     <label>造型 <select id="style"><option value="strip">撕紙條</option><option value="layer">多層拼貼</option></select></label>
     <label>用途 <select id="kind"><option value="quote">重點句</option><option value="label">小標題條</option></select></label>
     <label>排列 <select id="dir"><option value="h">橫排</option><option value="v">直排</option></select></label>
-    <label>背景 <select id="bg"><option value="none">透明</option><option value="full">全版紙張</option></select></label>
+    <label>背景 <select id="bg"><option value="none">透明</option><option value="full">全版紙張</option><option value="notebook">全版筆記本</option></select></label>
   </div>
   <div class="bar">
     <label>重點句（換行分句） <textarea id="title"></textarea></label>
@@ -88,7 +95,17 @@ const P = {
   items: q.get('items') || '了解近況｜連結｜誠實',
   // 小標題每一點出現的秒數，用｜分隔；沒填的點接在前一點後面 0.45 秒
   times: q.get('times') || '',
-  hold: Math.max(0, +q.get('hold') || 0),
+  // hold 可以是負的：縮短全部出來之後的停留時間（預設停 2.6 秒才離場）
+  hold: Math.max(-2.5, +q.get('hold') || 0),
+  // slow：整段放慢幾倍；pre／post：前後各留幾秒靜止畫面；exit 是 0 時不離場，停在完成畫面；deco 是 1 時最後畫星星和弧線
+  slow: Math.max(.2, +q.get('slow') || 1),
+  pre: Math.max(0, +q.get('pre') || 0),
+  post: Math.max(0, +q.get('post') || 0),
+  exit: q.get('exit') !== '0',
+  deco: q.get('deco') === '1',
+  // 小標題條：num 是 0 時不加圈號；width 有填的話每張紙條都一樣寬（像素）
+  num: q.get('num') !== '0',
+  width: Math.max(0, +q.get('width') || 0),
   render: q.has('render'),
 };
 if (P.render) { document.documentElement.classList.add('render'); document.body.classList.add('render'); }
@@ -158,8 +175,9 @@ function makePiece(o) {
   const paperBg = o.lines
     ? `repeating-linear-gradient(180deg, transparent 0 32px, rgba(90,140,190,.35) 32px 34px), linear-gradient(90deg, transparent 54px, rgba(214,70,60,.4) 54px 56px, transparent 56px), url(${o.tex})`
     : `url(${o.tex})`;
+  const colorCSS = o.color ? `background-color:${o.color};background-blend-mode:multiply;` : '';
   el.innerHTML = `${f ? `<div class="fiber" style="left:${-f}px;top:${-f}px;width:${w + f * 2}px;height:${h + f * 2}px"></div>` : ''}
-    <div class="paper" style="inset:0;background-image:${paperBg};background-position:${Math.floor(r() * 600)}px ${Math.floor(r() * 600)}px;${o.tint ? `filter:${o.tint};` : ''}"></div>
+    <div class="paper" style="inset:0;background-image:${paperBg};background-position:${Math.floor(r() * 600)}px ${Math.floor(r() * 600)}px;${colorCSS}${o.tint ? `filter:${o.tint};` : ''}"></div>
     ${o.crumple ? `<div class="crumple" style="inset:0;opacity:.55"></div>` : ''}
     <div class="dark" style="inset:0;opacity:0"></div>
     <div class="content">${o.html || ''}</div>`;
@@ -299,6 +317,13 @@ function buildQuoteLayer() {
     pill.paperEl.style.borderRadius = '999px';
     out.push(pill);
   }
+  // 收尾的手繪特效：左上角藍色星星、右上角放射線、卡片下面一道橘色弧線
+  if (P.deco) {
+    const sw = Math.min(560, tw * .5);
+    makeDoodle({ shape: 'star', x: x - 120, y: y - 100, size: 120, rot: -12, color: '#1e9ab4', draw: .45 });
+    makeDoodle({ shape: 'swoosh', x: x + tw / 2 - sw / 2 + 60, y: y + th + 40 - sw * .46, size: sw, rot: -2, draw: .45 });
+    makeDoodle({ shape: 'sparkle', x: x + tw - 20, y: y - 120, size: 140, rot: 10 });
+  }
   return { strips: out, extras: [] };
 }
 
@@ -311,20 +336,27 @@ function buildLabels() {
   let fs = 80, nfs = 50;
   const fontAt = s => layer ? `900 ${s}px ${FONT_BOLD}` : `700 ${s}px ${FONT_ROUND}`;
   // 橫排一字排開：太寬就整組縮小
-  const rowGap = 70, rowW = s => items.reduce((a, t) => a + measure(t, fontAt(s)) * 1.05 + s * 2.3, 0) + rowGap * (items.length - 1);
-  if (!vertical && rowW(fs) > 1720) { const k = 1720 / rowW(fs); fs *= k; nfs *= k; }
+  // 括號裡的字當成小字補充說明，例如「認識（客觀資料）」
+  const split = t => { const m = t.match(/^(.*?)\s*[（(](.+?)[）)]\s*$/); return m ? [m[1], m[2]] : [t, '']; };
+  // 有圈號時左邊多留圈號的位置；指定寬度時每張都一樣寬
+  const itemW = (t, s) => P.width || measure(split(t)[0], fontAt(s)) * 1.05 + s * (P.num ? 2.3 : 1.4);
+  const rowGap = 70, rowW = s => items.reduce((a, t) => a + itemW(t, s), 0) + rowGap * (items.length - 1);
+  // 指定寬度：字縮放到剛好放進紙條，左右留一點空
+  if (P.width) { const tw = Math.max(...items.map(t => measure(split(t)[0], fontAt(fs)) * 1.05)), room = P.width - fs * (P.num ? 2.3 : 1.4); if (tw > room) { const k = room / tw; fs *= k; nfs *= k; } }
+  else if (!vertical && rowW(fs) > 1720) { const k = 1720 / rowW(fs); fs *= k; nfs *= k; }
   const font = fontAt(fs);
   const fam = layer ? `font-family:${FONT_BOLD};font-weight:900` : `font-family:${FONT_ROUND};font-weight:700`;
   const out = [], extras = [];
   const r = rng(21);
   const times = P.times.split(/[｜|,，]/).map(s => parseFloat(s));
   let rowX = (W - rowW(fs)) / 2, prevT = null;
-  items.forEach((text, i) => {
+  items.forEach((item, i) => {
+    const [text, note] = split(item);
     const chars = [...text].length;
     let x, y, w, h;
     if (!vertical) {
       // 橫排：紙條在畫面中間左右一字排開
-      w = measure(text, font) * 1.05 + fs * 2.3; h = fs * 1.75;
+      w = itemW(item, fs); h = fs * 1.75;
       x = rowX; y = H / 2 - h / 2 + (i % 2 ? 26 : -18) + (r() - .5) * 20;
       rowX += w + rowGap;
     } else {
@@ -333,7 +365,7 @@ function buildLabels() {
       x = 1640 - i * (w + 46); y = 250 + (r() - .5) * 40;
     }
     // 數字：拼貼版是深色圓章；撕紙條版是橘色數字外面一個手繪圈（圈會一筆畫出來）
-    const num = layer
+    const num = !P.num ? '' : layer
       ? `<span style="font-family:${FONT_BOLD};font-weight:900;font-size:${nfs * .85}px;color:#fbf3e3;background:#2b2118;border-radius:999px;width:70px;height:70px;display:inline-flex;align-items:center;justify-content:center;flex:none">${i + 1}</span>`
       : `<span style="position:relative;font-family:${FONT_ROUND};font-weight:700;font-size:${nfs}px;color:#dd7d1b;width:72px;height:72px;display:inline-flex;align-items:center;justify-content:center;flex:none">${i + 1}<svg class="nc" viewBox="0 0 100 100" style="position:absolute;inset:-6px;width:84px;height:84px;overflow:visible;transform:rotate(${Math.round(r() * 90)}deg)"><path d="${DOODLE.circle}" fill="none" stroke="#dd7d1b" stroke-width="7" stroke-linecap="round"/></svg></span>`;
     const txt = `<span style="${fam};font-size:${fs}px;color:#2b2118;letter-spacing:.06em;${vertical ? 'writing-mode:vertical-rl;text-orientation:upright;' : ''}">${esc(text)}</span>`;
@@ -353,9 +385,19 @@ function buildLabels() {
         ? { x: x - 10, y: y - 24, w: w + 20, h: 46, rot: rot - 6, t0: t0 + .28, z: 4 + i * 5 }
         : { x: x - 34, y: y + h / 2 - 26, w: 120, h: 46, rot: -70 + rot, t0: t0 + .28, z: 4 + i * 5 }));
     } else {
-      const p = makePiece({ x, y, w, h, rot, tex: TEX.white, crumple: true, anim: 'uncrumple', t0,
+      const p = makePiece({ x, y, w, h, rot, tex: TEX.white, crumple: true, flatCrumple: .12, anim: 'uncrumple', t0,
         amp: vertical ? [12, 4, 12, 4] : [4, 13, 4, 13], z: 3 + i, html });
       out.push(p);
+    }
+    if (note) {
+      // 括號裡的補充說明：一張黃色便條，斜斜貼在紙條右下角，紙條攤平後才啪一下貼上
+      const ns = fs * .4;
+      const nw = measure(note, `700 ${ns}px ${FONT_ROUND}`) * 1.08 + ns * 1.5, nh = ns * 2.1;
+      const nx = vertical ? x + w * .45 : x + w - nw - fs * .1;
+      const ny = vertical ? y + h - nh * .6 : y + h - nh * .3;
+      const nhtml = `<span style="font-family:${FONT_ROUND};font-weight:700;font-size:${ns}px;color:#5a3d12;letter-spacing:.04em">${esc(note)}</span>`;
+      out.push(makePiece({ x: nx, y: ny, w: nw, h: nh, rot: rot + (i % 2 ? -5 : 4), tex: TEX.white, color: '#ffe48a', fiber: 0,
+        amp: [.6, .6, .6, .6], anim: 'pop', t0: t0 + (layer ? .7 : .6), z: 40 + i, html: nhtml }));
     }
   });
   return { strips: out, extras };
@@ -365,7 +407,7 @@ function buildLabels() {
 let S;
 function build() {
   pieces = []; doodles = []; seedN = 1;
-  scene.innerHTML = P.bg === 'full' ? '<div id="bg"></div>' : '';
+  scene.innerHTML = P.bg === 'full' ? '<div id="bg"></div>' : P.bg === 'notebook' ? '<div class="nb"></div>' : '';
   const L = P.kind === 'label' ? buildLabels() : (P.style === 'layer' ? buildQuoteLayer() : buildQuoteStrip());
   // 沒有指定出場時間的紙片，依序每 0.28 秒出一張
   let t = .2;
@@ -375,12 +417,21 @@ function build() {
   const lastIn = Math.max(...pieces.map(p => p.t0)) + .45;
   doodles.forEach((d, i) => { if (d.t0 == null) d.t0 = lastIn + i * .2; });
   const inEnd = Math.max(lastIn, ...doodles.map(d => d.t0 + .35));
-  const tExit = inEnd + 2.6 + P.hold;
   const order = [...pieces].sort((a, b) => b.t0 - a.t0);
-  order.forEach((p, i) => p.tOut = tExit + .15 + i * .07);
-  doodles.forEach(d => d.tOut = tExit);
-  const dur = tExit + .15 + order.length * .07 + .45;
-  S = { tExit, dur };
+  let tExit, dur;
+  if (P.exit) {
+    tExit = inEnd + 2.6 + P.hold;
+    order.forEach((p, i) => p.tOut = tExit + .15 + i * .07);
+    doodles.forEach(d => d.tOut = tExit);
+    dur = tExit + .15 + order.length * .07 + .45;
+  } else {
+    // 不離場：全部出來後再停一下就結束，後面接 post 的靜止畫面
+    tExit = dur = inEnd + 1 + P.hold;
+    order.forEach(p => p.tOut = Infinity);
+    doodles.forEach(d => d.tOut = Infinity);
+  }
+  // dur 是動畫本身的長度；real 是放慢、加上前後停留之後的實際秒數
+  S = { tExit, dur, real: P.pre + dur * P.slow + P.post };
   // 螢光筆底色
   pieces.forEach(p => {
     p.hl = p.el.querySelector('.hlbg');
@@ -390,8 +441,10 @@ function build() {
 }
 
 function renderAt(t) {
-  const tq = Math.floor(t * STOP_FPS + 1e-6) / STOP_FPS;
-  const frame = Math.floor(t * STOP_FPS + 1e-6);
+  // 定格的格數照實際時間算（每秒 12 張），再換算成動畫時間；動畫結束後畫面完全靜止
+  const real = Math.min(t - P.pre, S.dur * P.slow);
+  const frame = Math.floor(real * STOP_FPS + 1e-6);
+  const tq = frame / STOP_FPS / P.slow;
   pieces.forEach(p => {
     const inP = prog(tq, p.t0, p.anim === 'uncrumple' ? .42 : p.anim === 'slap' ? .17 : .3);
     const outP = prog(tq, p.tOut, p.anim === 'uncrumple' ? .34 : .25);
@@ -407,7 +460,7 @@ function renderAt(t) {
       const mix = (a, b) => a.map(([x, y], k) => [lerp(b[k][0], x, flat) + (hash(frame, k + p.idx * 7) - .5) * noise,
         lerp(b[k][1], y, flat) + (hash(frame + 3, k + p.idx * 7) - .5) * noise]);
       p.paperEl.style.clipPath = p.darkEl.style.clipPath = polyCSS(mix(p.poly, p.blob));
-      if (p.crumpleEl) { p.crumpleEl.style.clipPath = p.paperEl.style.clipPath; p.crumpleEl.style.opacity = lerp(.95, .5, flat); }
+      if (p.crumpleEl) { p.crumpleEl.style.clipPath = p.paperEl.style.clipPath; p.crumpleEl.style.opacity = lerp(.95, p.flatCrumple ?? .5, flat); }
       if (p.fiberEl) p.fiberEl.style.clipPath = polyCSS(mix(p.fpoly, p.fblob));
       p.darkEl.style.opacity = .35 * (1 - flat);
       p.contentEl.style.opacity = flat > .85 ? 1 : 0;
@@ -457,7 +510,7 @@ function buildSfx() {
     if (p.nc) ev.push({ t: p.t0 + .45, type: 'marker', dur: .3, gain: .2 });
   });
   doodles.forEach(d => ev.push({ t: d.t0, type: 'marker', dur: .3, gain: .22 }));
-  return { master: { lp: 3000, verb: .12 }, events: ev };
+  return { master: { lp: 3000, verb: .12 }, events: ev.filter(e => Number.isFinite(e.t)).map(e => ({ ...e, t: P.pre + e.t * P.slow })) };
 }
 
 /* ---------------- 播放與輸出 ---------------- */
@@ -467,9 +520,9 @@ async function start() {
     ...Object.values(TEX).map(src => new Promise(res => { const im = new Image(); im.onload = im.onerror = res; im.src = src; })),
   ]);
   build();
-  window.DUR = S.dur; window.renderAt = renderAt; window.SFX = buildSfx();
+  window.DUR = S.real; window.renderAt = renderAt; window.SFX = buildSfx();
   renderAt(0);
-  window.OPAQUE = P.bg === 'full';
+  window.OPAQUE = P.bg !== 'none';
   window.READY = true;
 }
 
@@ -478,17 +531,17 @@ function fit() { if (!P.render) scene.style.transform = `scale(${$('stage').clie
 let t0 = performance.now(), playing = true, cur = 0;
 function tick(now) {
   if (window.READY && playing) {
-    cur = ((now - t0) / 1000) % (S.dur + .6);
-    renderAt(Math.min(cur, S.dur));
-    $('scrub').value = Math.min(cur, S.dur) / S.dur;
-    $('time').textContent = `${Math.min(cur, S.dur).toFixed(2)} / ${S.dur.toFixed(2)}`;
+    cur = ((now - t0) / 1000) % (S.real + .6);
+    renderAt(Math.min(cur, S.real));
+    $('scrub').value = Math.min(cur, S.real) / S.real;
+    $('time').textContent = `${Math.min(cur, S.real).toFixed(2)} / ${S.real.toFixed(2)}`;
   }
   requestAnimationFrame(tick);
 }
 if (!P.render) {
   ['style', 'kind', 'dir', 'bg', 'title', 'sub', 'highlight', 'underline', 'items', 'times'].forEach(k => {
     $(k).value = P[k];
-    $(k).addEventListener('change', () => { P[k] = $(k).value; build(); window.DUR = S.dur; t0 = performance.now(); });
+    $(k).addEventListener('change', () => { P[k] = $(k).value; build(); window.DUR = S.real; t0 = performance.now(); });
   });
   $('play').onclick = () => {
     playing = !playing; $('play').textContent = playing ? '暫停' : '播放';
@@ -496,8 +549,8 @@ if (!P.render) {
   };
   $('scrub').oninput = e => {
     playing = false; $('play').textContent = '播放';
-    cur = e.target.value * S.dur; renderAt(cur);
-    $('time').textContent = `${cur.toFixed(2)} / ${S.dur.toFixed(2)}`;
+    cur = e.target.value * S.real; renderAt(cur);
+    $('time').textContent = `${cur.toFixed(2)} / ${S.real.toFixed(2)}`;
   };
   addEventListener('resize', fit); fit();
   start().then(() => requestAnimationFrame(tick));

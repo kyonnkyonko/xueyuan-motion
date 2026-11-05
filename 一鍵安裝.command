@@ -10,7 +10,12 @@ CHECK_ONLY=0
 
 ok()   { printf "  \033[32m✔\033[0m %s\n" "$1"; }
 bad()  { printf "  \033[31m✘\033[0m %s\n" "$1"; }
-FONT_URL="https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf"
+# 開放授權字型：思源黑體（全部頁面）、思源宋體（剪貼字卡）、jf open 粉圓（剪貼字卡）
+FONTS=(
+  "NotoSansTC|NotoSansTC-VariableFont_wght.ttf|https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC%5Bwght%5D.ttf|Noto Sans TC 字型"
+  "NotoSerifTC|NotoSerifTC-VariableFont_wght.ttf|https://github.com/google/fonts/raw/main/ofl/notoseriftc/NotoSerifTC%5Bwght%5D.ttf|Noto Serif TC 字型"
+  "jf-openhuninn|jf-openhuninn-2.1.ttf|https://github.com/justfont/open-huninn-font/releases/download/v2.1/jf-openhuninn-2.1.ttf|jf open 粉圓 字型"
+)
 
 # 讓剛裝好的 Homebrew 也找得到（Apple 晶片和 Intel 的位置不同）
 load_brew() {
@@ -21,7 +26,7 @@ load_brew() {
 }
 
 has_font() {
-  for f in "$HOME"/Library/Fonts/NotoSansTC* /Library/Fonts/NotoSansTC*; do
+  for f in "$HOME"/Library/Fonts/"$1"* /Library/Fonts/"$1"*; do
     [ -e "$f" ] && return 0
   done
   return 1
@@ -45,7 +50,10 @@ check_all() {
   else
     bad "Python 3"; MISSING+=(python numpy)
   fi
-  if has_font; then ok "Noto Sans TC 字型"; else bad "Noto Sans TC 字型"; MISSING+=(font); fi
+  for e in "${FONTS[@]}"; do
+    IFS='|' read -r pre file url label <<< "$e"
+    if has_font "$pre"; then ok "$label"; else bad "$label"; need font || MISSING+=(font); fi
+  done
   if [ -d node_modules/playwright-core ]; then ok "輸出工具（playwright-core）"; else bad "輸出工具（playwright-core）"; MISSING+=(npm); fi
   if [ -d node_modules/playwright-core ] && command -v node >/dev/null && node render.mjs --check >/dev/null 2>&1; then
     ok "瀏覽器"
@@ -70,10 +78,13 @@ install_missing() {
     python3 -m pip install --user numpy 2>/dev/null || brew install numpy
   fi
   if need font; then
-    echo ""; echo "▶ 下載 Noto Sans TC 字型（Google Fonts，開放授權）"
     mkdir -p "$HOME/Library/Fonts"
-    curl -fL -o "$HOME/Library/Fonts/NotoSansTC-VariableFont_wght.ttf" "$FONT_URL" \
-      || echo "字型下載失敗，請到 https://fonts.google.com/noto/specimen/Noto+Sans+TC 手動下載安裝。"
+    for e in "${FONTS[@]}"; do
+      IFS='|' read -r pre file url label <<< "$e"
+      has_font "$pre" && continue
+      echo ""; echo "▶ 下載 $label（開放授權）"
+      curl -fL -o "$HOME/Library/Fonts/$file" "$url" || echo "$label 下載失敗，請把這個網址貼給協助你的人：$url"
+    done
   fi
   if need npm || need node; then
     echo ""; echo "▶ 安裝輸出工具（npm install）"

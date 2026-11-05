@@ -1,0 +1,951 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>學園好食 全版金句卡</title>
+<style>
+  :root {
+    --orange: #dd7d1b; --yellow: #f9b625; --teal: #3cb1c8; --cream: #fff8ec; --ink: #2b2118;
+    --ui-bg: #1b1a19; --ui-panel: #262523; --ui-line: #3a3835; --ui-text: #ece8e1; --ui-dim: #a29d94;
+  }
+  html, body { margin: 0; background: var(--ui-bg); color: var(--ui-text); font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
+  html.render, body.render { background: transparent; overflow: hidden; }
+  #wrap { max-width: 1280px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+  h1 { font-size: 18px; font-weight: 700; margin: 4px 0 12px; }
+  #stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; background: #000; }
+  body.render #wrap { padding: 0; max-width: none; }
+  body.render #wrap > :not(#stage) { display: none; }
+  body.render #stage { width: 1920px; height: 1080px; aspect-ratio: auto; border-radius: 0; }
+
+  #scene { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden; }
+  .bg { position: absolute; inset: 0; }
+  .vig { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(40, 28, 10, .35) 100%); }
+
+  /* 撕紙條 */
+  .piece { position: absolute; filter: drop-shadow(3px 6px 5px rgba(20, 12, 0, .38)); }
+  .fiber, .paper, .crumple { position: absolute; }
+  .fiber { background: #fbf8f1; }
+  .paper { background-size: 900px auto; }
+  .crumple { background: url(textures/Paper003.jpg) center / 700px auto; mix-blend-mode: multiply; filter: contrast(1.6) brightness(1.05); }
+  .dark { position: absolute; background: #2a1d0c; }
+  .content { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .doodle { position: absolute; overflow: visible; }
+  .doodle path { fill: none; stroke: var(--orange); stroke-linecap: round; stroke-linejoin: round; }
+
+  /* 立體（立體書、明信片） */
+  #world { position: absolute; inset: 0; perspective: 2600px; perspective-origin: 50% 45%; }
+  .panel { position: absolute; transform-style: preserve-3d; }
+  .face { position: absolute; inset: 0; overflow: hidden; backface-visibility: hidden; background: url(textures/Paper001.jpg) 0 0 / 900px auto; }
+  .shade { position: absolute; inset: 0; background: #2a1d0c; opacity: 0; }
+
+  /* 乾淨排版 */
+  .blob { position: absolute; border-radius: 50%; filter: blur(60px); }
+  .ln { position: absolute; left: 0; width: 1920px; text-align: center; white-space: nowrap; }
+  .ch { display: inline-block; }
+
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px;
+    background: var(--ui-panel); border: 1px solid var(--ui-line); border-radius: 8px; padding: 10px 12px; }
+  .bar label { font-size: 13px; color: var(--ui-dim); display: flex; gap: 6px; align-items: center; }
+  .bar select, .bar textarea { background: var(--ui-bg); color: var(--ui-text); border: 1px solid var(--ui-line);
+    border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 14px; }
+  .bar textarea { width: min(300px, 70vw); height: 70px; resize: vertical; }
+  button { background: var(--orange); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  #scrub { flex: 1; min-width: 160px; accent-color: var(--orange); }
+  #time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ui-dim); min-width: 92px; text-align: right; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>學園好食 全版金句卡</h1>
+  <div id="stage"><div id="scene"></div></div>
+  <div class="bar">
+    <button id="play">暫停</button>
+    <input id="scrub" type="range" min="0" max="1" step="0.0001" value="0">
+    <span id="time">0.00 / 0.00</span>
+  </div>
+  <div class="bar">
+    <label>造型 <select id="style"><option value="strip">撕紙條</option><option value="clean">乾淨排版</option><option value="tear">撕開露字</option><option value="popup">立體書</option><option value="layers">剪紙景深</option><option value="envelope">信封</option></select></label>
+    <label>變體 <select id="v"><option value="">原版</option><option value="1">變體 1</option><option value="2">變體 2</option><option value="3">變體 3</option></select></label>
+    <label>金句（換行分句，# 開頭那句是藍色） <textarea id="title"></textarea></label>
+  </div>
+</div>
+
+<script>
+const W = 1920, H = 1080;
+const STOP_FPS = 12;
+// 文字動畫固定 5 秒，前後各留一段靜止畫面方便剪接
+const ANIM = 5;
+const q = new URLSearchParams(location.search);
+const num = (v, d) => (v == null || v === '' || isNaN(+v)) ? d : Math.max(0, +v);
+const P = {
+  style: q.get('style') || 'strip',
+  title: q.get('title') || '#友誼不進則退\n單看你願意主動多少\n主動的人必有收穫！',
+  pre: num(q.get('pre'), 2),
+  post: num(q.get('post'), 2),
+  // 變體編號：空白是原版，1、2、3 是變體
+  v: q.get('v') || '',
+  // 配合台詞：每一句開始講的秒數（從文字動畫開始算），例如 0,1.5,3.5；不寫就用各樣式原本的節奏
+  cue: (q.get('cue') || '').split(/[,，｜|]/).map(x => x.trim()).filter(Boolean).map(Number).filter(Number.isFinite),
+  render: q.has('render'),
+};
+const CUE = P.cue.length ? P.cue : null;
+if (P.render) { document.documentElement.classList.add('render'); document.body.classList.add('render'); }
+
+const INK = '#2b2118', ORANGE = '#dd7d1b', YELLOW = '#f9b625';
+// hashtag 用品牌藍綠色，壓深一點，在白紙上才看得清楚
+const TAG = '#1e9ab4';
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, start, dur) => clamp((t - start) / dur);
+const lerp = (a, b, x) => a + (b - a) * x;
+const ease = {
+  outCubic: x => 1 - Math.pow(1 - x, 3),
+  inOutCubic: x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2,
+  outBack: x => { const c1 = 1.6, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); },
+};
+function rng(seed) { return () => (seed = (seed * 16807) % 2147483647, (seed - 1) / 2147483646); }
+const hash = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+
+const FONT_ROUND = "'Yuanti TC', 'jf open 粉圓 2.1', 'jf-openhuninn-2.1', 'Noto Sans TC', sans-serif";
+const FONT_BOLD = "'Noto Sans TC', 'PingFang TC', sans-serif";
+const TEX = { white: 'textures/Paper001.jpg', crease: 'textures/Paper003.jpg', kraft: 'textures/Paper006.jpg', grey: 'textures/Paper002.jpg' };
+
+const scene = document.getElementById('scene');
+const cvs = document.createElement('canvas').getContext('2d');
+const measure = (s, font) => { cvs.font = font; return cvs.measureText(s).width; };
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const lines = () => P.title.split('\n').map(s => s.trim()).filter(Boolean);
+const isTag = l => /^[#＃]/.test(l);
+const colorOf = l => isTag(l) ? TAG : INK;
+// 最後一句最大，其他一樣大；太寬的那句自己縮小
+function sizesFor(ls, base, big, maxW, font) {
+  return ls.map((l, i) => {
+    let s = i === ls.length - 1 ? big : base;
+    const w = measure(l, font(s)) * 1.06;
+    return w > maxW ? s * maxW / w : s;
+  });
+}
+
+/* ---------- 撕紙形狀（跟 titles.html 一樣） ---------- */
+function torn(w, h, amp, r, step = 11) {
+  const pts = [];
+  const edge = (x0, y0, x1, y1, a, nx, ny) => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    let d = 0;
+    while (d < len) {
+      const k = d / len, j = a * (.35 + .65 * r()) * (.7 + .3 * Math.sin(d * .05 + r() * 6));
+      pts.push([x0 + (x1 - x0) * k + nx * j, y0 + (y1 - y0) * k + ny * j]);
+      d += step * (.6 + r() * .8);
+    }
+  };
+  edge(0, 0, w, 0, amp[0], 0, 1);
+  edge(w, 0, w, h, amp[1], -1, 0);
+  edge(w, h, 0, h, amp[2], 0, -1);
+  edge(0, h, 0, 0, amp[3], 1, 0);
+  return pts;
+}
+function blobOf(pts, w, h, r) {
+  const R = Math.min(w, h) * .62;
+  return pts.map(([x, y]) => {
+    const a = Math.atan2((y - h / 2) / h, (x - w / 2) / w);
+    const rr = R * (.7 + .55 * r());
+    return [w / 2 + Math.cos(a) * rr, h / 2 + Math.sin(a) * rr * .85];
+  });
+}
+const polyCSS = pts => `polygon(${pts.map(([x, y]) => `${x.toFixed(1)}px ${y.toFixed(1)}px`).join(',')})`;
+
+let pieces = [], doodles = [], seedN = 1;
+// tapes：會「啪」一下貼上去的膠帶；SCAM：撕紙條版的鏡頭（推近多少、轉多少度）
+let tapes = [], SCAM = { rot: 0, push: .05 };
+// 紙片和手繪線要放進哪一層（撕紙條版會放進可以推鏡的 #cam）
+let root = scene;
+// 有顏色的紙：紙張照片乘上顏色，保留紙紋
+const paperBg = (color, tex = TEX.white, size = 900, pos = '0 0') => `background:url(${tex}) ${pos} / ${size}px auto, ${color};background-blend-mode:multiply`;
+// 不會動的碎紙片（背景裝飾用）：撕邊、白色毛邊、陰影
+function scrap(o, parent = root) {
+  const r = rng(seedN++ * 6151);
+  const f = 4, amp = o.amp || [6, 10, 6, 10];
+  const lines = o.lines ? 'repeating-linear-gradient(180deg, transparent 0 34px, rgba(90,140,190,.35) 34px 36px),' : '';
+  const el = document.createElement('div');
+  el.className = 'piece';
+  Object.assign(el.style, { left: o.x + 'px', top: o.y + 'px', width: o.w + 'px', height: o.h + 'px', zIndex: o.z || 1, transform: `rotate(${o.rot || 0}deg)` });
+  el.innerHTML = `<div class="fiber" style="left:${-f}px;top:${-f}px;width:${o.w + f * 2}px;height:${o.h + f * 2}px;clip-path:${polyCSS(torn(o.w + f * 2, o.h + f * 2, amp.map(a => a * 1.3 + 1), r))}"></div>
+    <div class="paper" style="inset:0;${lines ? `background:${lines}url(${o.tex || TEX.white}) 0 0 / 900px auto` : paperBg(o.color || '#fff', o.tex || TEX.white, 900, `${Math.floor(r() * 600)}px ${Math.floor(r() * 600)}px`)};clip-path:${polyCSS(torn(o.w, o.h, amp, r))}"></div>`;
+  parent.appendChild(el);
+  return el;
+}
+// 半透明紙膠帶，兩頭是鋸齒
+function washi(o, parent = root) {
+  const r = rng(seedN++ * 104729);
+  const el = document.createElement('div');
+  el.className = 'tape';
+  Object.assign(el.style, { position: 'absolute', left: o.x + 'px', top: o.y + 'px', width: o.w + 'px', height: o.h + 'px', zIndex: o.z || 50,
+    transform: `rotate(${o.rot || 0}deg)`, clipPath: polyCSS(torn(o.w, o.h, [1, 6, 1, 6], r, 6)),
+    background: o.bg || 'rgba(244, 236, 206, .66)' });
+  parent.appendChild(el);
+  return el;
+}
+function makePiece(o) {
+  const r = rng(o.seed || (seedN++ * 7919));
+  const { w, h } = o;
+  const amp = o.amp || [4, 10, 4, 10];
+  const f = 4;
+  const poly = torn(w, h, amp, r);
+  const fpoly = torn(w + f * 2, h + f * 2, amp.map(a => a * 1.3 + 1), r);
+  const el = document.createElement('div');
+  el.className = 'piece';
+  Object.assign(el.style, { left: o.x + 'px', top: o.y + 'px', width: w + 'px', height: h + 'px', zIndex: o.z || 1 });
+  el.innerHTML = `<div class="fiber" style="left:${-f}px;top:${-f}px;width:${w + f * 2}px;height:${h + f * 2}px"></div>
+    <div class="paper" style="inset:0;${paperBg(o.color || '#fff', o.tex, 900, `${Math.floor(r() * 600)}px ${Math.floor(r() * 600)}px`)}"></div>
+    <div class="crumple" style="inset:0;opacity:.55"></div>
+    <div class="dark" style="inset:0;opacity:0"></div>
+    <div class="content">${o.html || ''}</div>`;
+  root.appendChild(el);
+  const p = {
+    ...o, el, poly, fpoly, blob: blobOf(poly, w, h, r), fblob: blobOf(fpoly, w + f * 2, h + f * 2, r),
+    fiberEl: el.querySelector('.fiber'), paperEl: el.querySelector('.paper'),
+    crumpleEl: el.querySelector('.crumple'), darkEl: el.querySelector('.dark'), contentEl: el.querySelector('.content'),
+    idx: pieces.length,
+  };
+  pieces.push(p);
+  return p;
+}
+const DOODLE = {
+  sparkle: 'M12 40 L28 50 M34 12 L40 32 M62 18 L50 36',
+  swoosh: 'M2 60 C 30 40, 64 72, 98 46',
+  star: 'M50 8 L60 40 L94 40 L66 60 L76 92 L50 72 L24 92 L34 60 L6 40 L40 40 Z',
+};
+function makeDoodle(o, parent = root) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  el.setAttribute('class', 'doodle');
+  el.setAttribute('viewBox', '0 0 100 100');
+  Object.assign(el.style, { left: o.x + 'px', top: o.y + 'px', width: o.size + 'px', height: o.size + 'px', zIndex: o.z || 60,
+    transform: `rotate(${o.rot || 0}deg)` });
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', DOODLE[o.shape]);
+  path.style.stroke = o.color || ORANGE;
+  path.style.strokeWidth = 6 * (o.weight || 1);
+  el.appendChild(path);
+  parent.appendChild(el);
+  const len = path.getTotalLength();
+  path.style.strokeDasharray = len;
+  const d = { ...o, el, path, len };
+  doodles.push(d);
+  return d;
+}
+function drawDoodles(a) {
+  doodles.forEach(d => {
+    const e = prog(a, d.t0, d.draw || .34);
+    d.el.style.visibility = e > 0 ? 'visible' : 'hidden';
+    d.path.style.strokeDashoffset = d.len * (1 - e);
+  });
+}
+
+/* ================= 版本 1：撕紙條（全版紙張背景） ================= */
+function buildStrip() {
+  scene.innerHTML = `<div id="cam" style="position:absolute;inset:0;transform-origin:50% 50%"><div class="bg" style="background:url(${TEX.grey}) center / cover;filter:brightness(.88) saturate(.9)"></div></div><div class="vig"></div>`;
+  root = scene.querySelector('#cam');
+  // 背景：桌上散著幾張舊紙片和膠帶，都靠畫面邊緣，中間留給金句
+  scrap({ x: -140, y: -90, w: 640, h: 400, rot: -8, tex: TEX.kraft, color: '#fff' });
+  scrap({ x: 1460, y: 700, w: 600, h: 460, rot: 7, lines: true });
+  scrap({ x: 1560, y: 70, w: 300, h: 210, rot: 11, color: '#f7c85a' });
+  scrap({ x: 60, y: 820, w: 360, h: 230, rot: -6, color: '#9fd5e0' });
+  scrap({ x: 330, y: 930, w: 260, h: 170, rot: 9, tex: TEX.crease, color: '#fff' });
+  washi({ x: 300, y: 250, w: 190, h: 52, rot: -32, z: 5 });
+  washi({ x: 1480, y: 720, w: 200, h: 52, rot: 24, z: 5 });
+  washi({ x: 1640, y: 60, w: 150, h: 46, rot: -14, bg: 'rgba(60,177,200,.45)', z: 5 });
+  const ls = lines();
+  const font = s => `700 ${s}px ${FONT_ROUND}`;
+  const sz = sizesFor(ls, 92, 144, 1500, font);
+  const gap = 10;
+  const total = sz.reduce((a, s) => a + s * 1.55, 0) + gap * (ls.length - 1);
+  let y = (H - total) / 2;
+  const r = rng(5);
+  const rots = [-1.8, 1.5, -1.2];
+  const out = [];
+  ls.forEach((l, i) => {
+    const s = sz[i], h = s * 1.55, w = measure(l, font(s)) * 1.08 + s * 1.1;
+    const last = i === ls.length - 1;
+    out.push(makePiece({ x: W / 2 - w / 2 + (r() - .5) * s * .5, y, w, h, rot: rots[i % 3], tex: TEX.white,
+      amp: [5, 14, 5, 14], z: 10 + i, t0: CUE ? CUE[i] ?? CUE[CUE.length - 1] + 1 : .2 + i * .75 + (last ? .1 : 0), color: last ? YELLOW : '#fff',
+      html: `<div style="font-family:${FONT_ROUND};font-weight:700;font-size:${s}px;color:${colorOf(l)};letter-spacing:.04em;white-space:nowrap">${esc(l)}</div>` }));
+    y += h + gap;
+  });
+  const last = out[out.length - 1];
+  const tDraw = last.t0 + .6;
+  const sw = Math.min(600, last.w * .55);
+  // 弧線畫在字的下緣外面，不壓到字
+  const lastS = sz[sz.length - 1], swY = last.y + last.h / 2 + lastS * .5 + sw * .12;
+  makeDoodle({ shape: 'swoosh', x: last.x + last.w / 2 - sw / 2 + 40, y: swY - sw * .53, size: sw, rot: last.rot - 2, t0: tDraw, draw: .4, weight: .7 });
+  makeDoodle({ shape: 'sparkle', x: last.x + last.w - 50, y: last.y - 100, size: 140, rot: 10, t0: tDraw + .35 });
+}
+function renderStrip(a) {
+  // 整段文字動畫裡，鏡頭很慢地推近一點
+  const cam = ease.inOutCubic(prog(a, 0, ANIM));
+  root.style.transform = `scale(${1 + SCAM.push * cam}) rotate(${SCAM.rot * (cam - .5)}deg)`;
+  // 定格動畫：每秒 12 張；文字動畫結束後完全靜止
+  const aq = Math.floor(clamp(a, -1, ANIM) * STOP_FPS + 1e-6) / STOP_FPS;
+  const frame = Math.floor(clamp(a, 0, ANIM) * STOP_FPS + 1e-6);
+  const still = a >= ANIM;
+  pieces.forEach(p => {
+    const inP = prog(aq, p.t0, .42);
+    const vis = aq >= p.t0;
+    p.el.style.visibility = vis ? 'visible' : 'hidden';
+    if (!vis) return;
+    const j = still ? 0 : 1;
+    const jx = (hash(frame, p.idx) - .5) * 2 * j, jy = (hash(frame, p.idx + 50) - .5) * 2 * j, jr = (hash(frame, p.idx + 90) - .5) * .6 * j;
+    if (p.anim === 'slide') {
+      // 不揉紙的紙條：形狀一開始就是攤平的
+      if (!p.flatSet) {
+        p.paperEl.style.clipPath = p.darkEl.style.clipPath = polyCSS(p.poly);
+        p.fiberEl.style.clipPath = polyCSS(p.fpoly);
+        p.crumpleEl.style.opacity = 0; p.darkEl.style.opacity = 0; p.contentEl.style.opacity = 1;
+        p.flatSet = true;
+      }
+      // 從畫面外被抽進來，稍微衝過頭再停住
+      const k = ease.outBack(prog(aq, p.t0, .4));
+      p.el.style.transform = `translate(${p.from * (1 - k) + jx}px,${jy}px) rotate(${p.rot + (1 - k) * 7 * Math.sign(p.from) + jr}deg)`;
+      return;
+    }
+    const e = clamp(ease.outBack(inP), 0, 1.05);
+    const flat = clamp(e);
+    const noise = (1 - flat) * 10;
+    const mix = (pa, pb) => pa.map(([x, y], k) => [lerp(pb[k][0], x, flat) + (hash(frame, k + p.idx * 7) - .5) * noise,
+      lerp(pb[k][1], y, flat) + (hash(frame + 3, k + p.idx * 7) - .5) * noise]);
+    p.paperEl.style.clipPath = p.darkEl.style.clipPath = p.crumpleEl.style.clipPath = polyCSS(mix(p.poly, p.blob));
+    p.crumpleEl.style.opacity = lerp(.95, .5, flat);
+    p.fiberEl.style.clipPath = polyCSS(mix(p.fpoly, p.fblob));
+    p.darkEl.style.opacity = .35 * (1 - flat);
+    p.contentEl.style.opacity = flat > .85 ? 1 : 0;
+    p.el.style.transform = `translate(${jx}px,${jy}px) rotate(${p.rot + (1 - flat) * 30 + jr}deg) scale(${lerp(.42, 1, e)})`;
+  });
+  tapes.forEach(tp => {
+    const e = prog(aq, tp.t0, .17);
+    tp.el.style.visibility = e > 0 ? 'visible' : 'hidden';
+    tp.el.style.transform = `rotate(${tp.rot}deg) scale(${lerp(1.3, 1, e)})`;
+  });
+  drawDoodles(aq);
+}
+function sfxStrip() {
+  const ev = [];
+  pieces.forEach(p => {
+    if (p.anim === 'slide') ev.push({ t: p.t0, type: 'paper_slide', dur: .45, gain: .4 }, { t: p.t0 + .3, type: 'flap', gain: .2 });
+    else ev.push({ t: p.t0, type: 'crinkle', dur: .42, gain: .32, density: 130, f0: 600, f1: 1600 }, { t: p.t0 + .36, type: 'flap', gain: .3 });
+  });
+  tapes.forEach(tp => ev.push({ t: tp.t0, type: 'crinkle', dur: .12, gain: .14, density: 90, f0: 600, f1: 1400 }));
+  doodles.forEach(d => ev.push({ t: d.t0, type: 'marker', dur: .3, gain: .22 }));
+  return { master: { lp: 3000, verb: .12 }, events: ev };
+}
+
+/* ---------- 撕紙條：變體 3 ---------- */
+// 把每一句做成紙條；o.layout(i, w, h) 回傳 { x, y }，o.paper(i) 回傳紙的材質和顏色
+function stripLines(o) {
+  const ls = lines();
+  const font = s => `700 ${s}px ${FONT_ROUND}`;
+  const sz = sizesFor(ls, o.base || 88, o.big || 140, o.maxW || 1450, font);
+  const gap = o.gap ?? 16;
+  const hs = sz.map(s => s * 1.55);
+  let y = (H - hs.reduce((a, b) => a + b, 0) - gap * (ls.length - 1)) / 2;
+  return ls.map((l, i) => {
+    const s = sz[i], h = hs[i], w = measure(l, font(s)) * 1.08 + s * 1.1;
+    const pos = o.layout ? o.layout(i, w, h, y) : { x: W / 2 - w / 2, y };
+    const pp = o.paper(i, i === ls.length - 1);
+    const p = makePiece({ ...pos, w, h, rot: o.rots[i % o.rots.length], tex: pp.tex || TEX.white, color: pp.color || '#fff',
+      amp: [5, 14, 5, 14], z: 10 + i, t0: o.t0s[i] ?? (o.t0s[o.t0s.length - 1] + .6), anim: o.anim, from: o.from ? o.from(i) : 0,
+      text: l, size: s,
+      html: `<div style="font-family:${FONT_ROUND};font-weight:700;font-size:${s}px;color:${o.colors ? o.colors[i] : colorOf(l)};letter-spacing:.04em;white-space:nowrap">${esc(l)}</div>` });
+    y += h + gap;
+    return p;
+  });
+}
+// 變體 3：整面是筆記本內頁，紙條從畫面左右兩邊輪流被抽進來
+function buildStrip3() {
+  SCAM = { rot: 0, push: .03 };
+  const nb = `background:radial-gradient(circle at 70px 50%, #d9cfbf 0 17px, transparent 18px) 0 0 / 140px 110px repeat-y,
+    linear-gradient(90deg, transparent 230px, rgba(214,70,60,.45) 230px 234px, transparent 234px),
+    repeating-linear-gradient(180deg, transparent 0 58px, rgba(90,140,190,.32) 58px 61px),
+    url(${TEX.white}) 0 0 / 1100px auto, #fffdf7`;
+  scene.innerHTML = `<div id="cam" style="position:absolute;inset:0;transform-origin:50% 50%"><div class="bg" style="${nb}"></div></div><div class="vig" style="background:radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(60,40,10,.18) 100%)"></div>`;
+  root = scene.querySelector('#cam');
+  const out = stripLines({ base: 90, big: 140, rots: [-2, 1.8, -1.2], t0s: [.2, .85, 1.55], anim: 'slide',
+    from: i => (i % 2 ? 1 : -1) * 1500,
+    paper: (i, last) => last ? { color: YELLOW } : { color: ['#ffe9b8', '#d4eef3'][i % 2] } });
+  const last = out[out.length - 1];
+  const sw = Math.min(560, last.w * .5);
+  makeDoodle({ shape: 'swoosh', x: last.x + last.w / 2 - sw / 2 + 40, y: last.y + last.h / 2 + last.size * .5 + sw * .12 - sw * .53, size: sw, rot: last.rot - 2, t0: last.t0 + .6, draw: .4, weight: .7 });
+  makeDoodle({ shape: 'star', x: out[0].x - 150, y: out[0].y - 30, size: 120, rot: -12, t0: last.t0 + .9, draw: .45, weight: .9, color: TAG });
+  makeDoodle({ shape: 'sparkle', x: last.x + last.w - 40, y: last.y - 100, size: 140, rot: 10, t0: last.t0 + 1.1 });
+}
+
+/* ================= 版本 3：品牌色乾淨排版 ================= */
+let C;
+function buildClean() {
+  const ls = lines();
+  const font = (s, wgt) => `${wgt} ${s}px ${FONT_BOLD}`;
+  const sz = sizesFor(ls, 94, 180, 1720, s => font(s, 900));
+  const lh = sz.map((s, i) => s * (i === ls.length - 1 ? 1.35 : 1.5));
+  const gapBig = 30;
+  const total = lh.reduce((a, b) => a + b, 0) + gapBig;
+  let y = (H - total) / 2 - 10;
+  // 背景：品牌色的剪紙形狀，邊緣清楚，底下有一點影子
+  // 形狀放在比畫面大一圈的框裡（座標多 60），慢慢飄的時候邊緣才不會露白
+  const M = 60;
+  const wave = (x0, x1, base, amp, k, ph, dip = 0) => {
+    const pts = [];
+    for (let x = x0; x <= x1; x += 20) pts.push([x + M, M + base + Math.sin(x * k + ph) * amp + Math.sin(x * k * 2.3 + ph * 1.7) * amp * .3 + dip * Math.pow(clamp((x - x0) / (x1 - x0)), 4)]);
+    return polyCSS([...pts, [x1 + M, H + 2 * M], [x0 + M, H + 2 * M]]);
+  };
+  const cuts = [
+    { clip: `circle(330px at ${160 + M}px ${140 + M}px)`, color: YELLOW },
+    { clip: `circle(105px at ${1720 + M}px ${190 + M}px)`, color: ORANGE },
+    { clip: wave(-60, 2000, 930, 40, .004, 1.2), color: '#9fd5e0' },
+    { clip: wave(-60, 2000, 990, 34, .0055, 3.4), color: '#3cb1c8' },
+    { clip: wave(-60, 1100, 1010, 30, .006, .2, 160), color: '#f7c85a' },
+  ];
+  let html = `<div class="bg" style="${paperBg('#fff8ec', TEX.white, 1200)}"></div>`;
+  html += cuts.map((c, i) => `<div class="blob" style="position:absolute;inset:0;filter:drop-shadow(0 6px 9px rgba(80,50,10,.28))"><div style="position:absolute;inset:-${M}px;clip-path:${c.clip};${paperBg(c.color, TEX.white, 900, `${i * 137}px ${i * 91}px`)}"></div></div>`).join('');
+  const lineEls = [];
+  ls.forEach((l, i) => {
+    const last = i === ls.length - 1;
+    if (last) y += gapBig;
+    const wgt = last || isTag(l) ? 900 : 700;
+    html += `<div class="ln" data-l="${i}" style="top:${y}px;height:${lh[i]}px;line-height:${lh[i]}px;font-family:${FONT_BOLD};font-weight:${wgt};font-size:${sz[i]}px;color:${colorOf(l)};letter-spacing:.05em">${[...l].map(c => `<span class="ch">${esc(c)}</span>`).join('')}</div>`;
+    lineEls.push({ i, y, h: lh[i], s: sz[i], text: l, last });
+    y += lh[i];
+  });
+  scene.innerHTML = html;
+  const lastL = lineEls[lineEls.length - 1];
+  const tw = measure(lastL.text, font(lastL.s, 900)) * 1.05;
+  doodles = [];
+  // 第一句（hashtag）貼在一條紙膠帶上
+  const first = lineEls[0];
+  const fw = measure(first.text, font(first.s, 900)) * 1.05 + first.s * 1.4;
+  const tape = washi({ x: W / 2 - fw / 2, y: first.y + first.h * .12, w: fw, h: first.h * .76, rot: -1.5, z: 4,
+    bg: 'repeating-linear-gradient(-45deg, rgba(60,177,200,.16) 0 14px, transparent 14px 28px), rgba(255,253,246,.88)' });
+  tape.style.filter = 'drop-shadow(0 2px 3px rgba(80,50,10,.18))';
+  // 最後一句後面一條撕邊的黃紙（從左往右露出來）
+  const hw = tw + 80, hh = lastL.s * .55;
+  const hl = scrap({ x: W / 2 - hw / 2, y: lastL.y + lastL.h / 2 + lastL.s * .02, w: hw, h: hh, rot: -1.2, color: YELLOW, amp: [4, 10, 4, 10], z: 3 });
+  makeDoodle({ shape: 'sparkle', x: W / 2 + tw / 2 - 10, y: lastL.y - 70, size: 130, rot: 8, color: ORANGE, t0: 2.95, draw: .3 });
+  scene.querySelectorAll('.ln').forEach(e => e.style.zIndex = 5);
+  C = {
+    tape, hl, tHl: 2.5,
+    blobs: [...scene.querySelectorAll('.blob')],
+    lines: [...scene.querySelectorAll('.ln')].map((el, i) => ({ el, chars: [...el.querySelectorAll('.ch')], t0: [.2, .95, 1.75][i] ?? (.2 + i * .75), last: i === ls.length - 1 })),
+  };
+}
+function renderClean(a) {
+  const t = clamp(a, -1, ANIM);
+  // 背景色塊慢慢飄，文字動畫結束就停住
+  C.blobs.forEach((b, i) => {
+    const k = clamp(t, 0, ANIM);
+    b.style.transform = `translate(${Math.sin(k * .5 + i * 2) * 14}px,${Math.cos(k * .4 + i) * 10}px)`;
+  });
+  // 紙膠帶比字早一點點貼上去
+  const et = prog(t, C.lines[0].t0 - .15, .2);
+  C.tape.style.opacity = et > 0 ? 1 : 0;
+  C.tape.style.transform = `rotate(-1.5deg) scale(${lerp(1.12, 1, ease.outCubic(et))})`;
+  const eh = ease.outCubic(prog(t, C.tHl, .4));
+  C.hl.style.visibility = eh > 0 ? 'visible' : 'hidden';
+  C.hl.style.clipPath = `inset(-20px ${(1 - eh) * 100}% -20px -20px)`;
+  C.lines.forEach(L => {
+    L.chars.forEach((c, k) => {
+      if (L.last) {
+        // 最後一句：每個字從小彈出來
+        const e = ease.outBack(prog(t, L.t0 + k * .06, .42));
+        c.style.opacity = clamp(prog(t, L.t0 + k * .06, .12));
+        c.style.transform = `translateY(${(1 - clamp(e)) * 30}px) scale(${lerp(.55, 1, e)})`;
+      } else {
+        const e = ease.outCubic(prog(t, L.t0 + k * .04, .45));
+        c.style.opacity = e;
+        c.style.transform = `translateY(${(1 - e) * 34}px)`;
+      }
+    });
+  });
+  drawDoodles(t);
+}
+function sfxClean() {
+  const ev = [{ t: 0, type: 'breeze', dur: .7, f0: 500, f1: 1500, gain: .3 }];
+  const notes = [523, 659, 784];
+  C.lines.forEach((L, i) => ev.push({ t: L.t0 + .05, type: 'kalimba', freq: notes[i % 3], gain: L.last ? .42 : .34 }));
+  ev.push({ t: C.lines[0].t0 - .15, type: 'thock', pitch: 1.2, gain: .16 });
+  ev.push({ t: C.tHl, type: 'paper_slide', dur: .4, gain: .3 }, { t: C.tHl + .3, type: 'flap', gain: .18 });
+  doodles.forEach(d => ev.push({ t: d.t0, type: 'marker', dur: .3, gain: .16 }));
+  return { master: { lp: 3500, verb: .22 }, events: ev };
+}
+
+/* ================= 共用：一行一行出現的金句 ================= */
+// 在 parent 裡垂直置中排好每一句，回傳每一句的資料（逐字動畫用）
+function buildLines(parent, ls, sz, cy, t0s, opt = {}) {
+  const lh = sz.map((s, i) => s * (i === ls.length - 1 ? 1.3 : 1.45));
+  const gap = opt.gap ?? 24;
+  let y = cy - (lh.reduce((a, b) => a + b, 0) + gap) / 2;
+  return ls.map((l, i) => {
+    const last = i === ls.length - 1;
+    if (last) y += gap;
+    const el = document.createElement('div');
+    el.className = 'ln';
+    el.style.cssText = `top:${y}px;height:${lh[i]}px;line-height:${lh[i]}px;font-family:${FONT_BOLD};font-weight:${last || isTag(l) ? 900 : 700};font-size:${sz[i]}px;color:${opt.colors ? opt.colors[i] : colorOf(l)};letter-spacing:.05em;z-index:${opt.z || 5}`;
+    el.innerHTML = [...l].map(c => `<span class="ch">${esc(c)}</span>`).join('');
+    parent.appendChild(el);
+    const o = { el, chars: [...el.querySelectorAll('.ch')], t0: t0s[i] ?? (t0s[t0s.length - 1] + .5 * (i - t0s.length + 1)), last, y, h: lh[i], s: sz[i], text: l };
+    y += lh[i];
+    return o;
+  });
+}
+// 前面幾句一個字一個字浮上來；最後一句每個字彈出來
+function animLines(L, t) {
+  L.forEach(l => l.chars.forEach((c, k) => {
+    if (l.last) {
+      const e = ease.outBack(prog(t, l.t0 + k * .06, .42));
+      c.style.opacity = clamp(prog(t, l.t0 + k * .06, .12));
+      c.style.transform = `translateY(${(1 - clamp(e)) * 30}px) scale(${lerp(.55, 1, e)})`;
+    } else {
+      const e = ease.outCubic(prog(t, l.t0 + k * .04, .45));
+      c.style.opacity = e;
+      c.style.transform = `translateY(${(1 - e) * 34}px)`;
+    }
+  }));
+}
+// 最後一句後面一條撕邊黃紙，從左往右露出來
+function makeHl(parent, l, t0, z = 3, color = YELLOW) {
+  const tw = measure(l.text, `900 ${l.s}px ${FONT_BOLD}`) * 1.05;
+  const hw = tw + 80, hh = l.s * .55;
+  const el = scrap({ x: W / 2 - hw / 2, y: l.y + l.h / 2 + l.s * .02, w: hw, h: hh, rot: -1.2, color: color || YELLOW, amp: [4, 10, 4, 10], z }, parent);
+  return { el, t0, tw };
+}
+function animHl(h, t) {
+  const e = ease.outCubic(prog(t, h.t0, .4));
+  h.el.style.visibility = e > 0 ? 'visible' : 'hidden';
+  h.el.style.clipPath = `inset(-20px ${(1 - e) * 100}% -20px -20px)`;
+}
+const lineSfx = L => L.map((l, i) => ({ t: l.t0 + .05, type: 'kalimba', freq: [523, 659, 784][i % 3], gain: l.last ? .4 : .32 }));
+
+/* ================= 版本 4：撕開露字 ================= */
+// 整面黃紙從中間上下撕開，露出底下的金句
+let TR;
+function buildTear() {
+  const ls = lines();
+  const sz = sizesFor(ls, 92, 160, 1640, s => `900 ${s}px ${FONT_BOLD}`);
+  scene.innerHTML = `<div class="bg" style="${paperBg('#fffdf7', TEX.white, 1100)}"></div>`;
+  const L = buildLines(scene, ls, sz, H / 2 + 10, [1.0, 1.45, 1.95]);
+  const hl = makeHl(scene, L[L.length - 1], 2.65, 3);
+  const r = rng(77);
+  const paper = YELLOW;
+  const sheet = (poly, fiber, pos) => {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:absolute;inset:0;z-index:20;filter:drop-shadow(0 8px 14px rgba(40,25,5,.38))';
+    el.innerHTML = `<div class="tf" style="position:absolute;inset:0;background:#fbf8f1;clip-path:${fiber}"></div>
+      <div class="tp" style="position:absolute;inset:0;${paperBg(paper, TEX.white, 1100, pos)};clip-path:${poly}"></div>`;
+    scene.appendChild(el);
+    return el;
+  };
+  const parts = [];
+  const tear = [];
+  for (let x = -60; x <= W + 60; x += 14) tear.push([x, 560 + 46 * Math.sin(x * .0034 + .6) + 16 * Math.sin(x * .012) + (r() - .5) * 16]);
+  // 撕口露出紙張裡面白色的纖維
+  const fib = sg => tear.map(([x, y]) => [x, y + sg * (5 + r() * 7)]);
+  parts.push(sheet(polyCSS([[-60, -60], [W + 60, -60], ...[...tear].reverse()]), polyCSS([[-60, -60], [W + 60, -60], ...fib(1).reverse()]), '0 0'));
+  parts.push(sheet(polyCSS([[W + 60, H + 60], [-60, H + 60], ...tear]), polyCSS([[W + 60, H + 60], [-60, H + 60], ...fib(-1)]), '300px 200px'));
+  TR = { L, hl, parts, tRip: .35 };
+  makeDoodle({ shape: 'sparkle', x: W / 2 + hl.tw / 2 - 10, y: L[L.length - 1].y - 70, size: 130, rot: 8, color: ORANGE, t0: 3.0, draw: .3 });
+}
+function renderTear(a) {
+  const t = clamp(a, -1, ANIM), R = TR;
+  // 先輕輕扯兩下，再一口氣撕開
+  const tug = prog(t, 0, R.tRip), wob = Math.sin(tug * Math.PI * 2) * 5 * (tug > 0 && tug < 1 ? 1 : 0);
+  const e = ease.outCubic(prog(t, R.tRip, .8));
+  const [p0, p1] = R.parts;
+  p0.style.transform = `translate(${-e * 30}px,${-430 * e - wob}px) rotate(${-2.2 * e}deg)`;
+  p1.style.transform = `translate(${e * 24}px,${410 * e + wob}px) rotate(${1.8 * e}deg)`;
+  animLines(R.L, t);
+  animHl(R.hl, t);
+  drawDoodles(t);
+}
+function sfxTear() {
+  const ev = [
+    { t: .05, type: 'crinkle', dur: .25, gain: .18, density: 90, f0: 600, f1: 1400 },
+    { t: TR.tRip, type: 'crinkle', dur: .55, gain: .42, density: 280, f0: 700, f1: 1800 },
+    { t: TR.tRip + .05, type: 'paper_slide', dur: .6, gain: .32 },
+    { t: TR.hl.t0, type: 'paper_slide', dur: .4, gain: .26 },
+    ...lineSfx(TR.L),
+  ];
+  doodles.forEach(d => ev.push({ t: d.t0, type: 'marker', dur: .3, gain: .16 }));
+  return { master: { lp: 3200, verb: .15 }, events: ev };
+}
+
+/* ================= 版本 5：立體書 ================= */
+// 一本書放在桌上，翻開後，紙卡一張一張從書頁上立起來
+// cfg：desk 桌面、cover 封面顏色、cardColors 文字卡顏色、deco 背景卡片、spin 鏡頭慢慢轉
+let PB;
+function buildPopup(cfg = {}) {
+  const ls = lines();
+  const BW = 1560, BH = 940, RIM = 18;
+  const sz = sizesFor(ls, 80, 128, 1300, s => `900 ${s}px ${FONT_BOLD}`);
+  const card = (o, inner) => `<div class="panel pcard" data-t="${o.t}" style="left:${BW / 2 - o.w / 2 + (o.dx || 0)}px;top:${o.hinge - o.h}px;width:${o.w}px;height:${o.h}px;transform-origin:50% 100%;visibility:hidden">${inner}</div>`;
+  const cardColors = cfg.cardColors || ['#fffdf7', '#fffdf7', YELLOW];
+  const textColors = ls.map(colorOf);
+  const textCard = (i, o) => card(o, `<div style="position:absolute;inset:0;clip-path:${polyCSS(torn(o.w, o.h, [3, 6, 0, 6], rng(o.hinge)))};${paperBg(cardColors[i % 3], TEX.white, 900)};display:flex;align-items:center;justify-content:center;box-shadow:inset 0 -14px 18px -12px rgba(60,40,10,.25)"><div style="font-family:${FONT_BOLD};font-weight:900;font-size:${sz[i]}px;color:${textColors[i]};letter-spacing:.05em;white-space:nowrap">${esc(ls[i])}</div></div>`);
+  const tw = i => measure(ls[i], `900 ${sz[i]}px ${FONT_BOLD}`) * 1.05 + 120;
+  const deco = cfg.deco(card);
+  const cards = deco + [
+    textCard(0, { hinge: 380, h: 150, w: tw(0), t: 1.4 }),
+    ls[1] ? textCard(1, { hinge: 620, h: 150, w: tw(1), t: 1.65 }) : '',
+    ls[2] ? textCard(2, { hinge: 900, h: 220, w: Math.min(BW - 60, tw(2)), t: 1.95 }) : '',
+  ].join('');
+  scene.innerHTML = `<div class="bg" style="${cfg.desk || paperBg('#c8a47c', TEX.kraft, 1100)}"></div><div class="vig"></div>
+    <div id="world" style="perspective:2400px;perspective-origin:50% 10%">
+      <div id="book" class="panel" style="left:${(W - BW) / 2}px;top:${(H - BH) / 2 - 10}px;width:${BW}px;height:${BH}px;transform-origin:50% 50%">
+        <div id="bshadow" style="position:absolute;top:0;height:${BH}px;background:rgba(20,15,5,.45);filter:blur(22px);transform:translate(16px,26px) translateZ(-6px)"></div>
+        <div class="panel" style="left:${-RIM}px;top:${-RIM}px;width:${BW / 2 + RIM}px;height:${BH + RIM * 2}px;${paperBg(cfg.cover || ORANGE)};transform:translateZ(-3px)"></div>
+        <div class="panel" style="left:0;top:0;width:${BW / 2}px;height:${BH}px;${paperBg('#fffdf7', TEX.white, 900)};box-shadow:inset -30px 0 30px -20px rgba(60,40,10,.25)"></div>
+        <div id="rp" class="panel" style="left:${BW / 2}px;top:${-RIM}px;width:${BW / 2 + RIM}px;height:${BH + RIM * 2}px;transform-origin:0 50%">
+          <div class="face" style="${paperBg(cfg.cover || ORANGE)}"><div style="position:absolute;left:0;top:${RIM}px;width:${BW / 2}px;height:${BH}px;${paperBg('#fffdf7', TEX.white, 900, '400px 0')};box-shadow:inset 30px 0 30px -20px rgba(60,40,10,.25)"></div><div class="shade"></div></div>
+          <div class="face" style="${paperBg(cfg.cover || ORANGE)};transform:rotateY(180deg)"><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:${FONT_BOLD};font-weight:900;font-size:110px;color:#fff3dc;letter-spacing:.12em">學園好食</div></div>
+        </div>
+        ${cards}
+      </div>
+    </div>`;
+  PB = { BW, BH, book: scene.querySelector('#book'), rp: scene.querySelector('#rp'), shadow: scene.querySelector('#bshadow'),
+    shade: scene.querySelector('#rp .shade'), cards: [...scene.querySelectorAll('.pcard')].map(el => ({ el, t: +el.dataset.t })), tOpen: .75,
+    tilt: 46, stand: -62, spin: cfg.spin || 0, nDeco: cfg.nDeco ?? 2 };
+}
+function renderPopup(a) {
+  const t = clamp(a, -1, ANIM);
+  const ein = ease.outCubic(prog(t, 0, .65));
+  const u = ease.inOutCubic(prog(t, PB.tOpen, .75));
+  const cam = ease.inOutCubic(prog(t, 0, ANIM));
+  PB.book.style.visibility = t >= 0 ? 'visible' : 'hidden';
+  // 合起來的書只有一半寬，先往右移讓它在畫面中間，打開時再回到正中
+  PB.book.style.transform = `translate(${PB.BW / 4 * (1 - u)}px,${lerp(820, 0, ein)}px) rotateX(${PB.tilt}deg) rotateZ(${lerp(-10, 0, ein) + PB.spin * (cam - .5)}deg)`;
+  PB.rp.style.transform = `translateZ(${4 * (1 - u)}px) rotateY(${lerp(-180, 0, u)}deg)`;
+  PB.shade.style.opacity = .35 * Math.abs(Math.sin(lerp(-180, 0, u) * Math.PI / 180));
+  Object.assign(PB.shadow.style, { left: '0px', width: PB.BW / 2 * (1 + u) + 'px' });
+  PB.cards.forEach(c => {
+    const p = prog(t, c.t, .5);
+    c.el.style.visibility = p > 0 ? 'visible' : 'hidden';
+    c.el.style.transform = `rotateX(${PB.stand * ease.outBack(p)}deg)`;
+  });
+}
+function sfxPopup() {
+  const ev = [
+    { t: 0, type: 'paper_slide', dur: .6, gain: .42 }, { t: .55, type: 'thock', pitch: .8, gain: .25 },
+    { t: PB.tOpen, type: 'crinkle', dur: .6, gain: .22, density: 100, f0: 600, f1: 1400 },
+    { t: PB.tOpen + .62, type: 'flap', gain: .38 },
+  ];
+  const nd = PB.nDeco;
+  PB.cards.forEach((c, i) => {
+    ev.push({ t: c.t + .12, type: 'flap', gain: i < nd ? .14 : .2 });
+    if (i >= nd) ev.push({ t: c.t + .1, type: 'kalimba', freq: [523, 659, 784][(i - nd) % 3], gain: i === PB.cards.length - 1 ? .4 : .32 });
+  });
+  return { master: { lp: 3200, verb: .18 }, events: ev };
+}
+
+/* ================= 版本 6：剪紙景深 ================= */
+// 好幾層剪紙從畫面外進來疊出景深。cfg.cam：pan 鏡頭橫移（預設）、none 不動；cfg.bob：海浪上下起伏
+let LY;
+function buildLayers(cfg = {}) {
+  const ls = lines();
+  const sz = sizesFor(ls, 84, 150, 1640, s => `900 ${s}px ${FONT_BOLD}`);
+  scene.innerHTML = `<div class="bg" style="${cfg.sky || paperBg('#fff1d6', TEX.white, 1100)}"></div>`;
+  const M = 260;
+  const hill = (base, amp, k, ph) => {
+    const pts = [];
+    for (let x = -M; x <= W + M; x += 20) pts.push([x + M, M + base + Math.sin(x * k + ph) * amp + Math.sin(x * k * 2.7 + ph) * amp * .25]);
+    return polyCSS([...pts, [W + 2 * M, H + 2 * M], [0, H + 2 * M]]);
+  };
+  const circles = cs => `path('${cs.map(([x, y, r]) => `M${x + M - r} ${y + M} a${r} ${r} 0 1 0 ${2 * r} 0 a${r} ${r} 0 1 0 ${-2 * r} 0 Z`).join(' ')}')`;
+  const defs = cfg.defs({ hill, circles });
+  const layers = defs.map((o, i) => {
+    const el = document.createElement('div');
+    el.style.cssText = `position:absolute;left:${-M}px;top:${-M}px;width:${W + 2 * M}px;height:${H + 2 * M}px;z-index:${2 + i};filter:drop-shadow(${o.shadow || '0 -5px 10px'} rgba(30,20,5,${cfg.shadowA || .25}))`;
+    el.innerHTML = `<div style="position:absolute;inset:0;clip-path:${o.clip};${paperBg(o.color, TEX.white, 900, `${i * 173}px ${i * 97}px`)}"></div>`;
+    scene.appendChild(el);
+    return { ...o, el, i };
+  });
+  const L = buildLines(scene, ls, sz, cfg.cy || 395, CUE || [1.25, 1.75, 2.3], { z: 30, gap: 14, colors: cfg.colors });
+  // hashtag 貼在一張白色小紙條上
+  let tag = null;
+  if (cfg.tag !== false) {
+    const f = L[0], fw = measure(f.text, `900 ${f.s}px ${FONT_BOLD}`) * 1.05 + f.s * 1.2;
+    tag = scrap({ x: W / 2 - fw / 2, y: f.y + f.h * .08, w: fw, h: f.h * .84, rot: -1.5, color: '#fffdf7', amp: [3, 8, 3, 8], z: 29 });
+  }
+  LY = { layers, L, tag, cam: cfg.cam || 'pan', bob: cfg.bob };
+}
+function renderLayers(a) {
+  const t = clamp(a, -1, ANIM);
+  const c = ease.inOutCubic(prog(t, 0, ANIM));
+  // 起伏在動畫最後一秒慢慢停下來，後面的停留畫面才是靜止的
+  const settle = 1 - ease.inOutCubic(prog(t, 4, 1));
+  LY.layers.forEach(l => {
+    const e = ease.outBack(prog(t, l.t0, .8));
+    const off = l.from * (1 - e);
+    l.el.style.visibility = prog(t, l.t0, .8) > 0 ? 'visible' : 'hidden';
+    const bob = LY.bob && !l.still ? Math.sin(clamp(t, 0, ANIM) * 1.7 + l.i * 1.3) * 12 * (.4 + l.d) * settle : 0;
+    const pan = LY.cam === 'pan' ? (30 + 160 * l.d) * c : 0;
+    l.el.style.transform = `translate(${(l.x ? off : 0) - pan}px,${(l.x ? 0 : off) + bob}px) scale(${1 + (LY.cam === 'pan' ? .05 * l.d * c : 0)})`;
+  });
+  if (LY.tag) {
+    const et = prog(t, Math.max(0, LY.L[0].t0 - .15), .25);
+    LY.tag.style.opacity = et > 0 ? 1 : 0;
+    LY.tag.style.transform = `rotate(-1.5deg) scale(${lerp(1.15, 1, ease.outCubic(et))})`;
+  }
+  animLines(LY.L, t);
+}
+function sfxLayers() {
+  const ev = [];
+  LY.layers.forEach(l => ev.push({ t: l.t0, type: 'paper_slide', dur: .45, gain: .2 }));
+  if (LY.tag) ev.push({ t: Math.max(0, LY.L[0].t0 - .15), type: 'flap', gain: .2 });
+  ev.push(...lineSfx(LY.L));
+  if (LY.bob) ev.push({ t: .2, type: 'breeze', dur: 2.4, f0: 300, f1: 900, gain: .22 }, { t: 2.4, type: 'breeze', dur: 2.2, f0: 300, f1: 900, gain: .16 });
+  return { master: { lp: 3200, verb: .2 }, events: ev };
+}
+
+/* ================= 版本 7：信封 ================= */
+/* ---------- 信封：變體 1 明信片 ---------- */
+// 一張明信片滑到牛皮紙桌上，正面是剪紙風景，翻過來是金句，再蓋郵票和郵戳
+let PC;
+function buildPostcard() {
+  const ls = lines();
+  const CW = 1440, CH = 840;
+  const sz = sizesFor(ls, 74, 120, CW - 320, s => `900 ${s}px ${FONT_BOLD}`);
+  const rowsH = sz.map((s, i) => s * (i === ls.length - 1 ? 1.4 : 1.5));
+  const swW = 460;
+  const rows = ls.map((l, i) => {
+    const last = i === ls.length - 1;
+    const sw = last ? `<svg class="sw" viewBox="0 0 100 100" style="position:absolute;left:50%;top:${rowsH[i] / 2 + sz[i] * .5 + 60}px;width:${swW}px;height:${swW}px;margin:-${swW * .53}px 0 0 -${swW * .45}px;overflow:visible;transform:rotate(-3deg)"><path d="${DOODLE.swoosh}" fill="none" stroke="${ORANGE}" stroke-width="4.6" stroke-linecap="round"/></svg>` : '';
+    return `<div style="position:relative;height:${rowsH[i]}px;line-height:${rowsH[i]}px;text-align:center;font-family:${FONT_BOLD};font-weight:${last || isTag(l) ? 900 : 700};font-size:${sz[i]}px;color:${colorOf(l)};letter-spacing:.05em;white-space:nowrap;${last ? 'margin-top:14px' : ''}">${esc(l)}${sw}</div>`;
+  }).join('');
+  const hill = (base, amp, k, ph) => {
+    const pts = [];
+    for (let x = 0; x <= CW; x += 20) pts.push([x, base + Math.sin(x * k + ph) * amp]);
+    return polyCSS([...pts, [CW, CH], [0, CH]]);
+  };
+  const front = `<div class="face" style="${paperBg('#fff1d6', TEX.white, 900)}">
+      <div style="position:absolute;inset:0;clip-path:circle(150px at 72% 40%);${paperBg(ORANGE)}"></div>
+      <div style="position:absolute;inset:0;clip-path:${hill(520, 50, .005, 1)};${paperBg('#86cddb')};filter:drop-shadow(0 -4px 6px rgba(0,0,0,.2))"></div>
+      <div style="position:absolute;inset:0;clip-path:${hill(620, 40, .007, 3)};${paperBg('#3cb1c8')}"></div>
+      <div style="position:absolute;inset:0;clip-path:${hill(720, 30, .006, 5)};${paperBg(YELLOW)}"></div>
+      <div style="position:absolute;left:70px;top:60px;font-family:${FONT_BOLD};font-weight:900;font-size:76px;color:${ORANGE};letter-spacing:.12em">學園好食</div></div>`;
+  const back = `<div class="face" style="${paperBg('#fffdf8', TEX.white, 900)};transform:rotateY(180deg)">
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;padding-top:40px">${rows}</div>
+      <svg id="pmark" viewBox="0 0 320 160" style="position:absolute;right:150px;top:34px;width:320px;height:160px;overflow:visible">
+        <circle pathLength="1" cx="230" cy="80" r="62" fill="none" stroke="rgba(43,33,24,.4)" stroke-width="5"/>
+        <circle pathLength="1" cx="230" cy="80" r="47" fill="none" stroke="rgba(43,33,24,.4)" stroke-width="3"/>
+        <path pathLength="1" d="M0 52 q 25 -14 50 0 t 50 0 t 50 0 M0 80 q 25 -14 50 0 t 50 0 t 50 0 M0 108 q 25 -14 50 0 t 50 0 t 50 0" fill="none" stroke="rgba(43,33,24,.4)" stroke-width="5" stroke-linecap="round"/></svg>
+      <div id="stamp" style="position:absolute;right:56px;top:46px;width:150px;height:182px;${paperBg(YELLOW)};outline:5px dashed #fffdf8;outline-offset:-12px;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 3px 6px rgba(60,40,10,.25)">
+        <div style="width:84px;height:84px;border-radius:50%;${paperBg(ORANGE)}"></div>
+        <div style="font-family:${FONT_BOLD};font-weight:900;font-size:22px;color:#fff;margin-top:10px;letter-spacing:.1em">學園好食</div></div>
+    </div>`;
+  scene.innerHTML = `<div class="bg" style="${paperBg('#ffffff', TEX.kraft, 1100)}"></div><div class="vig"></div>
+    <div id="world" style="perspective:2600px">
+      <div id="pcs" style="position:absolute;left:${(W - CW) / 2}px;top:${(H - CH) / 2}px;width:${CW}px;height:${CH}px;background:rgba(40,25,5,.45);filter:blur(18px)"></div>
+      <div id="pc" class="panel" style="left:${(W - CW) / 2}px;top:${(H - CH) / 2}px;width:${CW}px;height:${CH}px">${front}${back}</div>
+    </div>`;
+  const $$ = s => scene.querySelector(s);
+  const sw = $$('.sw path'), swLen = sw ? sw.getTotalLength() : 0;
+  if (sw) sw.style.strokeDasharray = swLen;
+  const pm = [...scene.querySelectorAll('#pmark [pathLength]')];
+  pm.forEach(p => p.style.strokeDasharray = 1);
+  PC = { pc: $$('#pc'), sh: $$('#pcs'), stamp: $$('#stamp'), pm, sw, swLen, tFlip: .85, tStamp: 2.0, tMark: 2.25, tDraw: 2.8 };
+}
+function renderPostcard(a) {
+  const t = clamp(a, -1, ANIM), R = PC;
+  const ein = ease.outCubic(prog(t, 0, .65)), flip = ease.inOutCubic(prog(t, R.tFlip, .8));
+  const lift = Math.sin(flip * Math.PI) * 160;
+  const x = lerp(-1250, 0, ein), y = lerp(380, 0, ein), rz = lerp(-20, -3, ein) + 2 * flip, sc = lerp(.8, 1, flip);
+  R.pc.style.visibility = R.sh.style.visibility = t >= 0 ? 'visible' : 'hidden';
+  R.pc.style.transform = `translate(${x}px,${y}px) translateZ(${lift}px) rotate(${rz}deg) scale(${sc}) rotateY(${180 * flip}deg)`;
+  R.sh.style.transform = `translate(${x + 14 + lift * .25}px,${y + 22 + lift * .3}px) rotate(${rz}deg) scale(${sc * Math.abs(Math.cos(flip * Math.PI)) * .96 + .02},${sc * .96})`;
+  R.sh.style.opacity = .7 - lift / 400;
+  const es = prog(t, R.tStamp, .2);
+  R.stamp.style.opacity = es > 0 ? 1 : 0;
+  R.stamp.style.transform = `rotate(4deg) scale(${lerp(1.5, 1, ease.outCubic(es))})`;
+  R.pm.forEach(p => p.style.strokeDashoffset = 1 - prog(t, R.tMark, .5));
+  if (R.sw) R.sw.style.strokeDashoffset = R.swLen * (1 - prog(t, R.tDraw, .42));
+}
+function sfxPostcard() {
+  const R = PC;
+  return { master: { lp: 3200, verb: .15 }, events: [
+    { t: 0, type: 'paper_slide', dur: .65, gain: .42 }, { t: .58, type: 'flap', gain: .2 },
+    { t: R.tFlip, type: 'crinkle', dur: .5, gain: .2, density: 90, f0: 600, f1: 1400 }, { t: R.tFlip + .72, type: 'flap', gain: .36 },
+    { t: R.tStamp + .12, type: 'thock', pitch: .7, gain: .38 },
+    { t: R.tMark, type: 'marker', dur: .4, gain: .16 }, { t: R.tDraw, type: 'marker', dur: .4, gain: .22 },
+  ] };
+}
+
+/* ---------- 信封：共用的信封零件 ---------- */
+// 回傳信封背面、封口、前面口袋的 HTML（ex, ey 是信封左上角）
+function envParts(ex, ey, EW, EH, c) {
+  const part = (id, x, y, w, h, z, inner, extra = '') => `<div id="${id}" style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;z-index:${z};${extra}">${inner}</div>`;
+  return part('eback', ex, ey, EW, EH, 1, '', `${c.back};box-shadow:0 18px 30px rgba(20,30,40,.35)`)
+    + part('eflap', ex, ey, EW, EH * .56, 5, `<div style="position:absolute;inset:0;clip-path:polygon(0 0,100% 0,50% 100%);${c.front}"></div><div class="fdark" style="position:absolute;inset:0;clip-path:polygon(0 0,100% 0,50% 100%);background:#5a4020;opacity:0"></div>`, 'transform-origin:50% 0;filter:drop-shadow(0 4px 4px rgba(60,40,10,.28))')
+    + part('epocket', ex, ey, EW, EH, 4, `<div style="position:absolute;inset:0;clip-path:polygon(0 0,50% 54%,100% 0,100% 100%,0 100%);${c.front}"></div>`, 'filter:drop-shadow(0 -3px 3px rgba(60,40,10,.2))');
+}
+// 封口往上掀：上下壓扁再翻過去來假裝 3D
+function animFlap(flap, fdark, t, t0) {
+  const fa = ease.inOutCubic(prog(t, t0, .45)) * Math.PI, cos = Math.cos(fa);
+  flap.style.transform = `scaleY(${cos})`;
+  flap.style.zIndex = cos < 0 ? 2 : 5;
+  fdark.style.opacity = cos < 0 ? .12 + .1 * -cos : .25 * (1 - cos);
+}
+
+/* ---------- 信封：變體 2 三張小卡 ---------- */
+// 黃色桌面上的信封，三張小卡一張一張抽出來，錯落排好；最後一句是藍綠色卡片
+let EC;
+function buildEnvCards() {
+  const ls = lines();
+  const EW = 900, EH = 560, OY = 330, K = .55;
+  const sz = sizesFor(ls, 80, 128, 1440, s => `900 ${s}px ${FONT_BOLD}`);
+  const hs = sz.map(s => s * 1.9), gap = 26;
+  let y = -130 - (hs.reduce((a, b) => a + b, 0) + gap * (ls.length - 1)) / 2;
+  const cards = ls.map((l, i) => {
+    const last = i === ls.length - 1;
+    const w = measure(l, `900 ${sz[i]}px ${FONT_BOLD}`) * 1.05 + 150, h = hs[i];
+    const o = { w, h, ty: y + h / 2, tx: [-110, 100, 0][i % 3], rot: [-3.5, 2.5, -1.5][i % 3], tc: CUE ? (i ? (CUE[i] ?? CUE[CUE.length - 1] + 1) - .3 : .35) : 1.15 + i * .55, last };
+    y += h + gap;
+    o.html = `<div class="ecard" style="position:absolute;left:${-w / 2}px;top:${-h / 2}px;width:${w}px;height:${h}px;z-index:3;visibility:hidden;${paperBg(last ? '#3cb1c8' : '#fffdf7', TEX.white, 900, `${i * 200}px 0`)};border-radius:6px;box-shadow:0 8px 18px rgba(80,50,10,.3);display:flex;align-items:center;justify-content:center;font-family:${FONT_BOLD};font-weight:900;font-size:${sz[i]}px;color:${last ? '#fffdf7' : colorOf(l)};letter-spacing:.05em;white-space:nowrap">${esc(l)}</div>`;
+    return o;
+  });
+  scene.innerHTML = `<div class="bg" style="${paperBg(YELLOW, TEX.white, 1100)}"></div><div class="vig"></div>
+    <div id="env" style="position:absolute;left:${W / 2}px;top:${H / 2}px;width:0;height:0">
+      ${envParts(-EW / 2, OY - EH / 2, EW, EH, { back: paperBg('#eadcc2'), front: paperBg('#fffaf0', TEX.white, 900, '200px 100px') })}
+      ${cards.map(c => c.html).join('')}
+    </div>`;
+  const $$ = s => scene.querySelector(s);
+  [...scene.querySelectorAll('.ecard')].forEach((el, i) => cards[i].el = el);
+  EC = { env: $$('#env'), back: $$('#eback'), flap: $$('#eflap'), fdark: $$('.fdark'), pocket: $$('#epocket'), cards, OY, EH, K,
+    ...(CUE ? { dIn: .4, tFlap: .15, tDrop: cards[cards.length - 1].tc + 1.1 } : { dIn: .65, tFlap: .65, tDrop: 2.95 }) };
+}
+function renderEnvCards(a) {
+  const t = clamp(a, -1, ANIM), E = EC;
+  E.env.style.visibility = t >= 0 ? 'visible' : 'hidden';
+  const ein = ease.outCubic(prog(t, 0, E.dIn));
+  E.env.style.transform = `translate(${lerp(900, 0, ein)}px,${lerp(500, 0, ein)}px) rotate(${lerp(14, 0, ein)}deg)`;
+  animFlap(E.flap, E.fdark, t, E.tFlap);
+  E.cards.forEach(c => {
+    const u1 = ease.inOutCubic(prog(t, c.tc, .35)), u2 = ease.inOutCubic(prog(t, c.tc + .35, .45));
+    const outY = E.OY - E.EH / 2 - E.K * c.h / 2 - 10;
+    c.el.style.visibility = t >= c.tc ? 'visible' : 'hidden';
+    c.el.style.transform = `translate(${lerp(0, c.tx, u2)}px,${lerp(lerp(E.OY + 20, outY, u1), c.ty, u2)}px) rotate(${lerp(0, c.rot, u2)}deg) scale(${lerp(E.K, 1, u2)})`;
+    c.el.style.zIndex = t >= c.tc + .35 ? 10 + E.cards.indexOf(c) : 3;
+  });
+  const drop = 800 * Math.pow(prog(t, E.tDrop, .6), 2);
+  [E.back, E.flap, E.pocket].forEach(el => el.style.translate = `0 ${drop}px`);
+}
+function sfxEnvCards() {
+  const E = EC;
+  const ev = [
+    { t: 0, type: 'paper_slide', dur: .65, gain: .42 }, { t: .58, type: 'flap', gain: .22 },
+    { t: E.tFlap, type: 'crinkle', dur: .35, gain: .2, density: 90, f0: 600, f1: 1400 }, { t: E.tFlap + .3, type: 'flap', gain: .2 },
+    { t: E.tDrop, type: 'paper_slide', dur: .55, gain: .22 },
+  ];
+  E.cards.forEach((c, i) => ev.push({ t: c.tc, type: 'paper_slide', dur: .4, gain: .3 }, { t: c.tc + .75, type: 'flap', gain: .26 },
+    { t: c.tc + .7, type: 'kalimba', freq: [523, 659, 784][i % 3], gain: c.last ? .4 : .32 }));
+  return { master: { lp: 3200, verb: .15 }, events: ev };
+}
+
+/* ---------------- 時間軸 ---------------- */
+const STYLES = {
+  strip: [buildStrip, renderStrip, sfxStrip],
+  clean: [buildClean, renderClean, sfxClean],
+  tear: [buildTear, renderTear, sfxTear],
+  // 變體：style 加上 v 參數。只留下有用到的，造型沒有原版時就用它的第一個變體
+  strip3: [buildStrip3, renderStrip, sfxStrip],
+  popup2: [() => buildPopup({ desk: paperBg('#22384a', TEX.white, 1100), cover: '#3cb1c8', spin: 7, cardColors: ['#fffdf7', '#fffdf7', YELLOW],
+    deco: card => {
+      const sky = [];
+      let x = 0;
+      const r = rng(9);
+      while (x < 1400) { const w = 60 + r() * 90, h = 90 + r() * 170; sky.push([x, 300 - h], [x + w, 300 - h]); x += w; }
+      return card({ hinge: 290, h: 300, w: 300, t: 1.15, dx: 430 }, `<div style="position:absolute;inset:0;clip-path:circle(110px at 150px 150px);${paperBg('#fff3dc')}"></div>`)
+        + card({ hinge: 300, h: 300, w: 900, t: 1.12, dx: -200 }, `<div style="position:absolute;inset:0;clip-path:path('M60 60 l10 22 24 3 -18 16 5 24 -21 -12 -21 12 5 -24 -18 -16 24 -3 Z M300 120 l7 15 16 2 -12 11 3 16 -14 -8 -14 8 3 -16 -12 -11 16 -2 Z M520 40 l8 18 20 2 -15 13 4 20 -17 -10 -17 10 4 -20 -15 -13 20 -2 Z');${paperBg(YELLOW)}"></div>`)
+        + card({ hinge: 340, h: 300, w: 1400, t: 1.2 }, `<div style="position:absolute;inset:0;clip-path:${polyCSS([[0, 300], ...sky, [1400, 300]])};${paperBg('#2f5f78')}"></div>`);
+    }, nDeco: 3 }), renderPopup, sfxPopup],
+  layers1: [() => buildLayers({
+    sky: paperBg('#22384a', TEX.white, 1100), tag: false, colors: ['#7fd6e6', '#fff8ec', YELLOW], shadowA: .45,
+    defs: ({ hill, circles }) => [
+      { clip: circles([[260, 160, 5], [520, 90, 4], [760, 210, 6], [1080, 70, 4], [1300, 190, 5], [1820, 120, 4], [140, 420, 4], [1760, 420, 5], [980, 250, 3], [640, 300, 4]]), color: YELLOW, d: .02, from: 0, t0: .1, shadow: '0 0 6px' },
+      { clip: circles([[1580, 250, 110]]), color: '#fff3dc', d: .05, from: 320, t0: .5, shadow: '0 0 30px' },
+      { clip: hill(700, 60, .0032, .4), color: '#2f5f78', d: .2, from: 520, t0: 0 },
+      { clip: hill(790, 50, .0042, 2.2), color: '#2f7a8c', d: .4, from: 520, t0: .1 },
+      { clip: hill(870, 44, .0036, 4.1), color: '#3c9fb3', d: .6, from: 520, t0: .2 },
+      { clip: hill(950, 36, .005, 1.3), color: '#1f4a5c', d: .8, from: 520, t0: .3 },
+      { clip: hill(1015, 26, .0058, 5.2), color: '#16303d', d: 1, from: 520, t0: .4 },
+    ] }), renderLayers, sfxLayers],
+  layers3: [() => buildLayers({
+    sky: paperBg('#fff1d6', TEX.white, 1100), cam: 'none', bob: true, cy: 300,
+    defs: ({ hill, circles }) => [
+      { clip: circles([[960, 720, 230]]), color: ORANGE, d: .05, from: 360, t0: .3, still: true },
+      { clip: circles([[300, 170, 60], [370, 150, 76], [450, 178, 56]]), color: '#ffffff', d: .15, from: -700, t0: .2, x: true, still: true },
+      { clip: hill(640, 16, .009, .4), color: '#cdeaf0', d: .2, from: 520, t0: 0 },
+      { clip: hill(720, 20, .008, 2.2), color: '#9fd8e3', d: .35, from: 520, t0: .1 },
+      { clip: hill(800, 24, .007, 4.1), color: '#5fc0d2', d: .5, from: 520, t0: .2 },
+      { clip: hill(880, 26, .0075, 1.3), color: '#3cb1c8', d: .7, from: 520, t0: .3 },
+      { clip: hill(970, 28, .0065, 5.2), color: '#2a95ab', d: 1, from: 520, t0: .4 },
+    ] }), renderLayers, sfxLayers],
+  envelope1: [buildPostcard, renderPostcard, sfxPostcard],
+  envelope2: [buildEnvCards, renderEnvCards, sfxEnvCards],
+};
+let cur3 = STYLES.strip, DUR = 0;
+function build() {
+  pieces = []; doodles = []; tapes = []; seedN = 1; root = scene; SCAM = { rot: 0, push: .05 };
+  cur3 = STYLES[P.style + P.v] || STYLES[P.style] || STYLES[Object.keys(STYLES).find(k => k.startsWith(P.style))] || STYLES.strip;
+  cur3[0]();
+  DUR = P.pre + ANIM + P.post;
+}
+function renderAt(t) { cur3[1](t - P.pre); }
+function buildSfx() {
+  const s = cur3[2]();
+  s.events.forEach(e => e.t += P.pre);
+  return s;
+}
+
+/* ---------------- 播放與輸出 ---------------- */
+async function start() {
+  await Promise.all([
+    document.fonts.load(`700 80px ${FONT_ROUND}`, '學園'), document.fonts.load(`900 80px ${FONT_BOLD}`, '學園'), document.fonts.load(`700 80px ${FONT_BOLD}`, '學園'),
+    ...Object.values(TEX).map(src => new Promise(res => { const im = new Image(); im.onload = im.onerror = res; im.src = src; })),
+  ]);
+  build();
+  window.DUR = DUR; window.renderAt = renderAt; window.SFX = buildSfx();
+  renderAt(0);
+  // 全版背景，不需要透明檔
+  window.OPAQUE = true;
+  window.READY = true;
+}
+
+const $ = s => document.getElementById(s);
+function fit() { if (!P.render) scene.style.transform = `scale(${$('stage').clientWidth / W})`; }
+let t0 = performance.now(), playing = true, cur = 0;
+function tick(now) {
+  if (window.READY && playing) {
+    cur = ((now - t0) / 1000) % (DUR + .6);
+    renderAt(Math.min(cur, DUR));
+    $('scrub').value = Math.min(cur, DUR) / DUR;
+    $('time').textContent = `${Math.min(cur, DUR).toFixed(2)} / ${DUR.toFixed(2)}`;
+  }
+  requestAnimationFrame(tick);
+}
+if (!P.render) {
+  ['style', 'v', 'title'].forEach(k => {
+    $(k).value = P[k];
+    $(k).addEventListener('change', () => { P[k] = $(k).value; build(); window.DUR = DUR; t0 = performance.now(); });
+  });
+  $('play').onclick = () => {
+    playing = !playing; $('play').textContent = playing ? '暫停' : '播放';
+    if (playing) t0 = performance.now() - cur * 1000;
+  };
+  $('scrub').oninput = e => {
+    playing = false; $('play').textContent = '播放';
+    cur = e.target.value * DUR; renderAt(cur);
+    $('time').textContent = `${cur.toFixed(2)} / ${DUR.toFixed(2)}`;
+  };
+  addEventListener('resize', fit); fit();
+  start().then(() => requestAnimationFrame(tick));
+} else {
+  start();
+}
+</script>
+</body>
+</html>

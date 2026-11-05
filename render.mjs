@@ -66,7 +66,8 @@ const stills = fi >= 0 ? args[fi + 1].split(',').map(Number) : null;
 const filter = args.find((a, i) => !a.startsWith('--') && (fi < 0 || i !== fi + 1));
 
 const jobs = JSON.parse(fs.readFileSync(path.join(dir, 'jobs.json'), 'utf8'))
-  .filter(j => !filter || j.name.includes(filter));
+  // 開頭加 = 代表名稱要完全一樣，例如 =ep3_金句卡_主動_撕紙條（不會連變體一起輸出）
+  .filter(j => !filter || (filter.startsWith('=') ? j.name === filter.slice(1) : j.name.includes(filter)));
 const outDir = path.join(dir, 'output');
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -145,14 +146,16 @@ for (const job of jobs) {
       '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', '-vendor', 'apl0', ...aMov,
       path.join(outDir, `${job.name}.mov`)]);
   }
-  // MP4（透明處補黑）；全版的用更高的畫質設定
-  const quality = opaque ? ['-crf', '12', '-preset', 'slow', '-profile:v', 'high', '-tune', 'animation'] : ['-crf', '16'];
-  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', input, ...audio,
-    '-filter_complex', `color=black:s=1920x1080:r=${FPS}[bg];[bg][0:v]overlay=shortest=1,format=yuv420p[v]`,
-    '-c:v', 'libx264', ...quality, '-movflags', '+faststart', ...aMp4, path.join(outDir, `${job.name}.mp4`)]);
-  if (opaque) for (const ext of ['mov', 'wav']) fs.rmSync(path.join(outDir, `${job.name}.${ext}`), { force: true });
+  // 全版：高畫質 MP4（音效封在裡面）。透明：只留 MOV（音效已封在 MOV 裡），不另外輸出 MP4 和 WAV
+  if (opaque) {
+    const quality = ['-crf', '12', '-preset', 'slow', '-profile:v', 'high', '-tune', 'animation'];
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(FPS), '-i', input, ...audio,
+      '-filter_complex', `color=black:s=1920x1080:r=${FPS}[bg];[bg][0:v]overlay=shortest=1,format=yuv420p[v]`,
+      '-c:v', 'libx264', ...quality, '-movflags', '+faststart', ...aMp4, path.join(outDir, `${job.name}.mp4`)]);
+  }
+  for (const ext of opaque ? ['mov', 'wav'] : ['mp4', 'wav']) fs.rmSync(path.join(outDir, `${job.name}.${ext}`), { force: true });
   fs.rmSync(fdir, { recursive: true, force: true });
-  console.log(`${job.name}: ${n + 1} 格，${dur}s → output/${job.name}${opaque ? '.mp4（全版，只留 MP4）' : '.mov / .mp4'}`);
+  console.log(`${job.name}: ${n + 1} 格，${dur}s → output/${job.name}${opaque ? '.mp4（全版，只留 MP4）' : '.mov（透明，只留 MOV）'}`);
 }
 
 await browser.close();

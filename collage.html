@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>學園好食 剪貼字卡</title>
+<style>
+  :root {
+    --orange: #dd7d1b; --yellow: #f9b625; --ink: #2b2118; --desk: #d9d5cc;
+    --ui-bg: #1b1a19; --ui-panel: #262523; --ui-line: #3a3835; --ui-text: #ece8e1; --ui-dim: #a29d94;
+  }
+  html, body { margin: 0; background: var(--ui-bg); color: var(--ui-text); font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
+  html.render, body.render { background: var(--desk); overflow: hidden; }
+  #wrap { max-width: 1280px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+  h1 { font-size: 18px; font-weight: 700; margin: 4px 0 12px; }
+  #stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; }
+  body.render #wrap { padding: 0; max-width: none; }
+  body.render #wrap > :not(#stage) { display: none; }
+  body.render #stage { width: 1920px; height: 1080px; aspect-ratio: auto; border-radius: 0; }
+
+  #scene { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0;
+    background: var(--desk); overflow: hidden; }
+  .grain { position: absolute; inset: 0; pointer-events: none; background-image: var(--noise); }
+  #desk-grain { opacity: .7; }
+  #vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 50%, rgba(40, 30, 15, .25) 100%); }
+  #world { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; perspective: 1800px; }
+
+  /* 一張剪下來的紙片：靜止的一半＋會翻開的一半 */
+  .scrap { position: absolute; transform-style: preserve-3d; }
+  .scrap .shadow { position: absolute; inset: 0; background: rgba(30, 20, 5, .45); filter: blur(7px); transform: translate(7px, 9px) translateZ(-1px); }
+  .half { position: absolute; transform-style: preserve-3d; }
+  .face { position: absolute; inset: 0; overflow: hidden; backface-visibility: hidden; }
+  .face .grain { opacity: .5; }
+  .back { transform: rotateY(180deg); filter: brightness(.9) saturate(.85); }
+  .shade { position: absolute; inset: 0; background: #20160a; opacity: 0; }
+  .glyph { position: absolute; display: flex; align-items: center; justify-content: center; line-height: 1; }
+  .crease { position: absolute; background: rgba(0, 0, 0, .08); }
+
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px;
+    background: var(--ui-panel); border: 1px solid var(--ui-line); border-radius: 8px; padding: 10px 12px; }
+  .bar label { font-size: 13px; color: var(--ui-dim); display: flex; gap: 6px; align-items: center; }
+  .bar input[type=text], .bar textarea { background: var(--ui-bg); color: var(--ui-text); border: 1px solid var(--ui-line);
+    border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 14px; }
+  .bar textarea { width: min(320px, 70vw); height: 52px; resize: vertical; }
+  button { background: var(--orange); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  #scrub { flex: 1; min-width: 160px; accent-color: var(--orange); }
+  #time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ui-dim); min-width: 92px; text-align: right; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>學園好食 剪貼字卡</h1>
+  <div id="stage"><div id="scene"></div></div>
+  <div class="bar">
+    <button id="play">暫停</button>
+    <input id="scrub" type="range" min="0" max="1" step="0.0001" value="0">
+    <span id="time">0.00 / 0.00</span>
+  </div>
+  <div class="bar">
+    <label>金句（換行分句）<textarea id="title"></textarea></label>
+    <label>出處 <input id="sub" type="text"></label>
+    <label>重點字（黃紙） <input id="highlight" type="text" placeholder="可留空"></label>
+  </div>
+</div>
+
+<script src="logo.js"></script>
+<script>
+const W = 1920, H = 1080;
+const MX = 647.5, MY = 208.5;
+// 定格動畫的格數：紙片每秒只動 12 次，鏡頭 24 次，看起來像一張一張拍出來的
+const STOP_FPS = 12, CAM_FPS = 24;
+
+const q = new URLSearchParams(location.search);
+const P = {
+  title: q.get('title') || '練習彼此誠實，\n互相督促成長',
+  sub: q.get('sub') ?? '摯友的定義',
+  highlight: q.get('highlight') ?? '彼此誠實',
+  hold: Math.max(0, +q.get('hold') || 0),
+  render: q.has('render'),
+};
+if (P.render) { document.documentElement.classList.add('render'); document.body.classList.add('render'); }
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, start, dur) => clamp((t - start) / dur);
+const lerp = (a, b, x) => a + (b - a) * x;
+const ease = {
+  outCubic: x => 1 - Math.pow(1 - x, 3),
+  inCubic: x => x * x * x,
+  inOutCubic: x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2,
+  outBack: x => { const c1 = 1.4, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); },
+};
+function rng(seed) { return () => (seed = (seed * 16807) % 2147483647, (seed - 1) / 2147483646); }
+// 每一格、每一張紙片固定的小晃動（定格動畫手抖的感覺）
+const hash = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+
+const noise = `url("data:image/svg+xml;utf8,${encodeURIComponent(
+  `<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' seed='9'/><feColorMatrix values='0 0 0 0 .35 0 0 0 0 .3 0 0 0 0 .22 0 0 0 .3 0'/></filter><rect width='300' height='300' filter='url(%23n)'/></svg>`
+).replace(/%2523/g, '%23')}")`;
+document.documentElement.style.setProperty('--noise', noise);
+
+// 紙色＋墨色，配合品牌色；重點字一律用品牌黃紙
+const PAPERS = [
+  { bg: '#d6b58a', ink: '#2b2118' },  // 牛皮紙
+  { bg: '#f6f2e8', ink: '#2b2118' },  // 白紙
+  { bg: '#cde2e8', ink: '#1d5563' },  // 淡藍紙
+  { bg: '#efe8da', ink: '#dd7d1b' },  // 米色紙、橘字
+  { bg: '#b9b4aa', ink: '#2b2118' },  // 灰紙
+  { bg: '#2f2a24', ink: '#fbf3e3' },  // 深色紙、白字
+];
+const HL_PAPER = { bg: '#f9b625', ink: '#2b2118' };
+// 字型名稱用單引號，因為會直接寫進 HTML 的 style="..." 裡
+const FONTS = [
+  { family: "'Noto Sans TC', 'PingFang TC', sans-serif", weight: 900 },
+  { family: "'Noto Serif TC', 'Songti TC', serif", weight: 900 },
+  { family: "'jf open 粉圓 2.1', 'jf-openhuninn-2.1', 'Yuanti TC', sans-serif", weight: 400 },
+  { family: "'Kaiti TC', 'BiauKai', 'DFKai-SB', serif", weight: 700 },
+  { family: "'Yuanti TC', 'Noto Sans TC', sans-serif", weight: 700 },
+];
+
+const scene = document.getElementById('scene');
+let S;  // 版面與時間軸
+
+function layout() {
+  const r = rng(11);
+  const lines = P.title.split('\n').map(s => s.trim()).filter(Boolean);
+  const maxLen = Math.max(...lines.map(l => [...l].length));
+  const size = Math.min(210, 1560 / maxLen / .95, 620 / lines.length);
+  const pitchX = size * .95, pitchY = size * 1.18;
+  const subH = P.sub ? size * .55 : 0;
+  const blockH = lines.length * pitchY + (P.sub ? subH + size * .25 : 0);
+  const top0 = (H - blockH) / 2;
+  const hlSet = new Set();
+  lines.forEach((l, li) => {
+    const k = P.highlight ? l.indexOf(P.highlight) : -1;
+    if (k >= 0) for (let j = 0; j < [...P.highlight].length; j++) hlSet.add(`${li}:${k + j}`);
+  });
+  const items = [];
+  let lastPaper = -1, lastFont = -1;
+  lines.forEach((l, li) => {
+    const chars = [...l];
+    const lineW = chars.length * pitchX;
+    chars.forEach((ch, ci) => {
+      const punct = /[，。、；：！？,.!?「」『』]/.test(ch);
+      const hl = hlSet.has(`${li}:${ci}`);
+      let pi; do { pi = Math.floor(r() * PAPERS.length); } while (pi === lastPaper);
+      let fi; do { fi = Math.floor(r() * FONTS.length); } while (fi === lastFont);
+      lastPaper = pi; lastFont = fi;
+      const scale = punct ? .55 : hl ? 1.08 : .92 + r() * .16;
+      const w = size * scale * (1.0 + r() * .14), h = size * scale * (1.05 + r() * .16);
+      const cx = (W - lineW) / 2 + pitchX * (ci + .5) + (r() - .5) * size * .08;
+      const cy = top0 + pitchY * (li + .5) + (r() - .5) * size * .1 + (punct ? size * .22 : 0);
+      items.push({
+        kind: 'char', ch, w, h, x: cx - w / 2, y: cy - h / 2, cx, cy,
+        rot: (r() - .5) * 12, paper: hl ? HL_PAPER : PAPERS[pi], font: FONTS[fi],
+        fontSize: size * scale * (.72 + r() * .1), axis: r() < .5 ? 'h' : 'v', z: Math.floor(r() * 10),
+      });
+    });
+  });
+  if (P.sub) {
+    const fs = size * .3, w = [...P.sub].length * fs * 1.15 + fs * 1.6, h = subH;
+    const cy = top0 + lines.length * pitchY + size * .25 + h / 2;
+    items.push({ kind: 'sub', ch: P.sub, w, h, x: W / 2 - w / 2, y: cy - h / 2, cx: W / 2, cy, rot: -1.5,
+      paper: { bg: '#f6f2e8', ink: '#dd7d1b' }, font: FONTS[0], fontSize: fs, axis: 'h', z: 20 });
+  }
+  // 最後貼上一張圓形 logo 貼紙，放在整段右下角
+  const last = items[items.length - 1];
+  const ls = size * .62;
+  items.push({ kind: 'logo', w: ls, h: ls, x: Math.min(W - ls - 60, (W + Math.max(...items.map(i => i.x + i.w)) * 2 - W) / 2 - ls * .2),
+    y: last.y + last.h - ls * .55, rot: 8, paper: { bg: '#fffaf0' }, axis: 'v', z: 30 });
+  const lg = items[items.length - 1]; lg.cx = lg.x + lg.w / 2; lg.cy = lg.y + lg.h / 2;
+
+  // 時間軸
+  const n = items.length;
+  const step = Math.min(.15, 2.3 / n);
+  items.forEach((it, i) => {
+    it.t0 = .25 + i * step + (it.kind !== 'char' ? .15 : 0);
+  });
+  const tRevealEnd = items[n - 1].t0 + .4;
+  const tZoom = items.filter(i => i.kind === 'char').slice(-1)[0].t0 + .3;
+  const tFull = tZoom + .9;
+  const tExit = Math.max(tFull, tRevealEnd) + 1.8 + P.hold;
+  items.forEach((it, i) => { it.tOut = tExit + (n - 1 - i) * .035; });
+  const dur = tExit + (n - 1) * .035 + .5;
+  const bx0 = Math.min(...items.map(i => i.x)), bx1 = Math.max(...items.map(i => i.x + i.w));
+  const by0 = Math.min(...items.map(i => i.y)), by1 = Math.max(...items.map(i => i.y + i.h));
+  return { items, size, tZoom, tFull, tExit, dur, center: [(bx0 + bx1) / 2, (by0 + by1) / 2] };
+}
+
+function faceContent(it) {
+  if (it.kind === 'logo') {
+    return `<svg style="position:absolute;inset:8%" viewBox="${MX - 45} ${MY - 45} 90 90">
+      <path d="${LOGO.mark.circle}" fill="#f9b625"/><path d="${LOGO.mark.arc}" fill="#dd7d1b"/>
+      <path d="${LOGO.mark.chop1}" fill="#dd7d1b"/><path d="${LOGO.mark.chop2}" fill="#dd7d1b"/></svg>`;
+  }
+  const esc = it.ch.replace(/</g, '&lt;');
+  const ls = it.kind === 'sub' ? 'letter-spacing:.15em;' : '';
+  return `<div class="glyph" style="width:${it.w}px;height:${it.h}px;color:${it.paper.ink};font-family:${it.font.family};font-weight:${it.font.weight};font-size:${it.fontSize}px;${ls}">${esc}</div>`;
+}
+
+function buildScrap(it, parent) {
+  const el = document.createElement('div');
+  el.className = 'scrap';
+  Object.assign(el.style, { left: it.x + 'px', top: it.y + 'px', width: it.w + 'px', height: it.h + 'px', zIndex: it.z });
+  const radius = it.kind === 'logo' ? 'border-radius:50%;' : '';
+  // 橫摺：上半往下蓋住下半；直摺：右半往左蓋住左半
+  const hz = it.axis === 'h';
+  const A = hz ? { x: 0, y: it.h / 2, w: it.w, h: it.h / 2 } : { x: 0, y: 0, w: it.w / 2, h: it.h };
+  const B = hz ? { x: 0, y: 0, w: it.w, h: it.h / 2 } : { x: it.w / 2, y: 0, w: it.w / 2, h: it.h };
+  const face = (r, back) => `<div class="face ${back ? 'back' : ''}" style="background:${it.paper.bg};${radius}">
+      ${back ? '' : `<div style="position:absolute;left:${-r.x}px;top:${-r.y}px;width:${it.w}px;height:${it.h}px;${radius}overflow:hidden;background:${it.paper.bg}">${faceContent(it)}</div>`}
+      <div class="grain"></div><div class="shade"></div></div>`;
+  // 圓形貼紙要讓兩半各自只露出半圓
+  const clip = r => it.kind === 'logo' ? `overflow:hidden;` : '';
+  el.innerHTML = `<div class="shadow" style="${radius}"></div>
+    <div class="half a" style="left:${A.x}px;top:${A.y}px;width:${A.w}px;height:${A.h}px">${face(A, false).replace('class="face ', 'class="face keep ')}</div>
+    <div class="half b" style="left:${B.x}px;top:${B.y}px;width:${B.w}px;height:${B.h}px;transform-origin:${hz ? '50% 100%' : '0 50%'}">${face(B, false)}${face(B, true)}</div>
+    <div class="crease" style="${hz ? `left:0;top:${it.h / 2 - 1}px;width:${it.w}px;height:2px` : `left:${it.w / 2 - 1}px;top:0;width:2px;height:${it.h}px`}"></div>`;
+  if (it.kind === 'logo') {
+    // 圓形：用整體圓角遮罩，兩半各自的臉已經裁成同一個圓的一部分
+    el.querySelectorAll('.face').forEach(f => f.style.borderRadius = '0');
+    el.querySelector('.half.a').style.cssText += `;border-radius:${hz ? '0 0 999px 999px' : '999px 0 0 999px'};overflow:hidden`;
+    el.querySelectorAll('.half.b .face').forEach(f => f.style.borderRadius = hz ? '999px 999px 0 0' : '0 999px 999px 0');
+  }
+  parent.appendChild(el);
+  return { el, b: el.querySelector('.half.b'), shades: [...el.querySelectorAll('.half.b .shade')],
+    crease: el.querySelector('.crease'), shadow: el.querySelector('.shadow') };
+}
+
+let world, nodes;
+function build() {
+  S = layout();
+  scene.innerHTML = `<div id="desk-grain" class="grain"></div><div id="world"></div><div id="vignette"></div>`;
+  world = document.getElementById('world');
+  nodes = S.items.map(it => buildScrap(it, world));
+}
+
+function renderAt(t) {
+  const tq = Math.floor(t * STOP_FPS + 1e-6) / STOP_FPS;
+  const tc = Math.floor(t * CAM_FPS + 1e-6) / CAM_FPS;
+  const frame = Math.floor(t * STOP_FPS + 1e-6);
+
+  S.items.forEach((it, i) => {
+    const nd = nodes[i];
+    const drop = prog(tq, it.t0, .12);
+    const unfold = ease.outBack(prog(tq, it.t0 + .1, .25));
+    const close = ease.inCubic(prog(tq, it.tOut, .17));
+    const pop = prog(tq, it.tOut + .17, .12);
+    const visible = tq >= it.t0 && pop < 1;
+    nd.el.style.visibility = visible ? 'visible' : 'hidden';
+    if (!visible) return;
+    const fold = 1 - unfold + close;  // 1 = 摺起來，0 = 攤平
+    const ang = 180 * clamp(fold, -.15, 1);
+    nd.b.style.transform = it.axis === 'h' ? `translateZ(${fold > .02 ? 1 : 0}px) rotateX(${-ang}deg)` : `translateZ(${fold > .02 ? 1 : 0}px) rotateY(${-ang}deg)`;
+    nd.shades.forEach(s => s.style.opacity = .3 * Math.sin(Math.PI * clamp(fold)));
+    nd.crease.style.opacity = fold < .5 ? 1 : 0;
+    // 摺著的時候影子只剩一半大
+    const half = clamp(fold);
+    nd.shadow.style.clipPath = it.axis === 'h' ? `inset(${50 * half}% 0 0 0)` : `inset(0 ${50 * half}% 0 0)`;
+    const jx = (hash(frame, i) - .5) * 2.4, jy = (hash(frame, i + 99) - .5) * 2.4, jr = (hash(frame, i + 199) - .5) * .7;
+    const sc = lerp(1.25, 1, ease.outCubic(drop)) * (1 - ease.inCubic(pop));
+    nd.el.style.transform = `translate(${jx}px,${jy}px) rotate(${it.rot + jr + pop * 20}deg) scale(${sc})`;
+  });
+
+  // 鏡頭：先貼近、跟著目前正在攤開的紙片移動，最後拉遠看全部
+  const chars = S.items.filter(it => it.kind === 'char');
+  let k = 0;
+  for (let i = 0; i < chars.length; i++) if (tc >= chars[i].t0 + .05) k = i;
+  const nextI = Math.min(k + 1, chars.length - 1);
+  const f = chars.length > 1 ? clamp((tc - chars[k].t0 - .05) / Math.max(.01, chars[nextI].t0 - chars[k].t0)) : 0;
+  const followX = lerp(chars[k].cx, chars[nextI].cx, ease.inOutCubic(f));
+  const followY = lerp(chars[k].cy, chars[nextI].cy, ease.inOutCubic(f));
+  const z = ease.inOutCubic(prog(tc, S.tZoom, S.tFull - S.tZoom));
+  const closeScale = clamp(2.2 * 210 / S.size, 1.6, 3);
+  const camScale = lerp(closeScale, 1, z) * (1 + .015 * prog(tc, S.tFull, S.tExit - S.tFull));
+  const cx = lerp(followX, S.center[0], z), cy = lerp(followY, S.center[1], z);
+  world.style.transform = `translate(${W / 2}px,${H / 2}px) scale(${camScale}) translate(${-cx}px,${-cy}px)`;
+}
+
+function buildSfx() {
+  const ev = [];
+  S.items.forEach(it => {
+    ev.push({ t: it.t0 + .1, type: 'flap', gain: it.kind === 'char' ? .32 : .4 });
+    ev.push({ t: it.t0 + .08, type: 'crinkle', dur: .22, gain: .22, density: 120 });
+  });
+  ev.push({ t: S.tZoom, type: 'paper_slide', dur: .9, gain: .3 });
+  const n = S.items.length;
+  ev.push({ t: S.tExit, type: 'crinkle', dur: Math.min(1.2, n * .035 + .3), gain: .4 });
+  [0, .3, .6].forEach(d => ev.push({ t: S.tExit + d * n * .035, type: 'flap', gain: .3 }));
+  return { master: { lp: 3500, verb: .15 }, events: ev };
+}
+
+/* ---------------- 播放與輸出 ---------------- */
+async function start() {
+  await Promise.all(FONTS.map(f => document.fonts.load(`${f.weight} 100px ${f.family}`, '學園好食')));
+  build();
+  window.DUR = S.dur; window.renderAt = renderAt; window.SFX = buildSfx();
+  renderAt(0);
+  // 整個畫面都是桌面背景，不需要透明檔
+  window.OPAQUE = true;
+  window.READY = true;
+}
+
+const $ = s => document.getElementById(s);
+function fit() { if (!P.render) scene.style.transform = `scale(${$('stage').clientWidth / W})`; }
+let t0 = performance.now(), playing = true, cur = 0;
+function tick(now) {
+  if (window.READY && playing) {
+    cur = ((now - t0) / 1000) % (S.dur + .6);
+    renderAt(Math.min(cur, S.dur));
+    $('scrub').value = Math.min(cur, S.dur) / S.dur;
+    $('time').textContent = `${Math.min(cur, S.dur).toFixed(2)} / ${S.dur.toFixed(2)}`;
+  }
+  requestAnimationFrame(tick);
+}
+if (!P.render) {
+  $('title').value = P.title; $('sub').value = P.sub; $('highlight').value = P.highlight;
+  $('play').onclick = () => {
+    playing = !playing; $('play').textContent = playing ? '暫停' : '播放';
+    if (playing) t0 = performance.now() - cur * 1000;
+  };
+  $('scrub').oninput = e => {
+    playing = false; $('play').textContent = '播放';
+    cur = e.target.value * S.dur; renderAt(cur);
+    $('time').textContent = `${cur.toFixed(2)} / ${S.dur.toFixed(2)}`;
+  };
+  ['title', 'sub', 'highlight'].forEach(k => $(k).addEventListener('change', () => {
+    P[k] = $(k).value; build(); window.DUR = S.dur; t0 = performance.now();
+  }));
+  addEventListener('resize', fit); fit();
+  start().then(() => requestAnimationFrame(tick));
+} else {
+  start();
+}
+</script>
+</body>
+</html>

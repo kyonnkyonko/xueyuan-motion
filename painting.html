@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>學園好食 名畫介紹</title>
+<style>
+  :root {
+    --ui-bg: #1b1a19; --ui-panel: #262523; --ui-line: #3a3835; --ui-text: #ece8e1; --ui-dim: #a29d94; --orange: #dd7d1b;
+  }
+  html, body { margin: 0; background: var(--ui-bg); color: var(--ui-text); font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
+  html.render, body.render { background: #000; overflow: hidden; }
+  #wrap { max-width: 1280px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+  h1 { font-size: 18px; font-weight: 700; margin: 4px 0 12px; }
+  #stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; background: #000; }
+  body.render #wrap { padding: 0; max-width: none; }
+  body.render #wrap > :not(#stage) { display: none; }
+  body.render #stage { width: 1920px; height: 1080px; aspect-ratio: auto; border-radius: 0; }
+
+  #scene { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; overflow: hidden; }
+  #cam { position: absolute; inset: 0; transform-origin: 45% 50%; background: #c9b083; }
+  .abs { position: absolute; }
+  /* 羊皮紙：暖黃底色乘上紙張照片，邊緣燒深 */
+  .page { position: absolute; top: -40px; height: 1160px; overflow: hidden;
+    background: url(textures/Paper003.jpg) 0 0 / 900px auto, url(textures/Paper001.jpg) 0 0 / 1100px auto, #ead6ab;
+    background-blend-mode: multiply, multiply, normal; }
+  .page::after { content: ""; position: absolute; inset: 0; pointer-events: none; }
+  .ink { position: absolute; left: 0; width: 100%; text-align: center; white-space: nowrap; color: #2e1d10; mix-blend-mode: multiply; }
+  .ch { display: inline-block; }
+
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px;
+    background: var(--ui-panel); border: 1px solid var(--ui-line); border-radius: 8px; padding: 10px 12px; }
+  .bar label { font-size: 13px; color: var(--ui-dim); display: flex; gap: 6px; align-items: center; }
+  .bar textarea { background: var(--ui-bg); color: var(--ui-text); border: 1px solid var(--ui-line); border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 14px; width: min(320px, 70vw); height: 92px; }
+  button { background: var(--orange); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+  #scrub { flex: 1; min-width: 160px; accent-color: var(--orange); }
+  #time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ui-dim); min-width: 92px; text-align: right; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>學園好食 名畫介紹</h1>
+  <div id="stage"><div id="scene"></div></div>
+  <div class="bar">
+    <button id="play">暫停</button>
+    <input id="scrub" type="range" min="0" max="1" step="0.0001" value="0">
+    <span id="time">0.00 / 0.00</span>
+  </div>
+  <div class="bar">
+    <label>右頁文字（一行一句） <textarea id="title"></textarea></label>
+  </div>
+</div>
+
+<script>
+const W = 1920, H = 1080;
+const q = new URLSearchParams(location.search);
+const num = (v, d) => (v == null || v === '' || isNaN(+v)) ? d : Math.max(0, +v);
+const P = {
+  // 第一行是小標，第二行是畫名（最大），括號開頭的英文那行用英文手寫體，最後是畫家
+  title: q.get('title') || '友誼的故事\n《禱告的手》\n（The Praying Hands）\n阿爾布雷希特·杜勒\nAlbrecht Dürer',
+  img: q.get('img') || 'images/praying_hands.jpg',
+  pre: num(q.get('pre'), 2),
+  post: num(q.get('post'), 2),
+  render: q.has('render'),
+};
+if (P.render) { document.documentElement.classList.add('render'); document.body.classList.add('render'); }
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, start, dur) => clamp((t - start) / dur);
+const lerp = (a, b, x) => a + (b - a) * x;
+const ease = {
+  outCubic: x => 1 - Math.pow(1 - x, 3),
+  inOutSine: x => -(Math.cos(Math.PI * x) - 1) / 2,
+};
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+// 中文用行楷，英文用花體字；沒有這些字型的電腦會改用楷體
+const FONT_ZH = "'Xingkai TC', 'Kaiti TC', 'BiauKai', 'DFKai-SB', serif";
+const FONT_EN = "'Apple Chancery', 'Snell Roundhand', 'Savoye LET', 'Monotype Corsiva', 'Gabriola', cursive";
+const INK = '#2e1d10', RUST = '#8a3d17';
+const scene = document.getElementById('scene');
+const cvs = document.createElement('canvas').getContext('2d');
+const measure = (s, font) => { cvs.font = font; return cvs.measureText(s).width; };
+
+/* ---------- 畫面 ---------- */
+// 文字動畫的長度依行數自動算；前後各加 pre／post 秒的靜止畫面
+let R, ANIM, DUR;
+function build() {
+  const ls = P.title.split('\n').map(s => s.trim()).filter(Boolean);
+  const isEn = l => /^[（(]?[A-Za-z]/.test(l) && !/[一-鿿]/.test(l.replace(/[（）]/g, ''));
+  // 每一行的字型和大小：第 2 行是畫名，最大
+  const spec = ls.map((l, i) => {
+    const en = isEn(l);
+    // 小標和畫名差不多大
+    const size = i === 0 ? 96 : i === 1 ? 104 : en ? 60 : 54;
+    return { l, en, size, color: i === 0 ? RUST : INK, font: `${en ? 400 : 700} ${size}px ${en ? FONT_EN : FONT_ZH}` };
+  });
+  // 可寫的寬度約 760，太寬就縮小
+  spec.forEach(s => { const w = measure(s.l, s.font); if (w > 760) { s.size *= 760 / w; s.font = `${s.en ? 400 : 700} ${s.size}px ${s.en ? FONT_EN : FONT_ZH}`; } });
+  const gapAfter = i => i === 0 ? 10 : i === 1 ? 22 : i === 2 ? 84 : 16;
+  const total = spec.reduce((a, s, i) => a + s.size * 1.25 + (i < spec.length - 1 ? gapAfter(i) : 0), 0);
+  let y = 540 - total / 2;
+
+  // 書比畫面大一圈，看不到桌面和書皮，只看得到兩頁羊皮紙和中間的書溝
+  const BOOK_X = -60, BOOK_W = 2040, MID = BOOK_X + BOOK_W / 2;
+  let html = `<div id="cam">
+    <div class="page" style="left:${BOOK_X}px;width:${BOOK_W / 2 + 6}px;background-position:0 0, 200px 100px, 0 0">
+      <div class="abs" style="inset:0;background:linear-gradient(90deg, rgba(90,50,15,.35) 0, transparent 12%, transparent 80%, rgba(90,50,15,.22) 92%, rgba(50,25,5,.6) 100%)"></div>
+    </div>
+    <div class="page" style="left:${MID}px;width:${BOOK_W / 2}px;background-position:400px 200px, 600px 0, 0 0">
+      <div class="abs" style="inset:0;background:linear-gradient(270deg, rgba(90,50,15,.35) 0, transparent 12%, transparent 80%, rgba(90,50,15,.22) 92%, rgba(50,25,5,.6) 100%)"></div>
+    </div>
+    <!-- 書溝：兩頁中間的深色陰影，同時蓋住兩頁的接縫，鏡頭縮放時才不會閃出細縫 -->
+    <div class="abs" style="left:${MID - 36}px;top:-40px;width:72px;height:1160px;background:linear-gradient(90deg, transparent, rgba(60,30,5,.32) 42%, rgba(45,22,4,.5) 50%, rgba(60,30,5,.32) 58%, transparent)"></div>
+    <div class="abs" style="left:${MID - 3}px;top:-40px;width:9px;height:1160px;background:linear-gradient(90deg, rgba(45,22,4,.35), rgba(35,16,2,.75) 45%, rgba(35,16,2,.75) 55%, rgba(45,22,4,.35))"></div>
+    <svg class="abs" viewBox="0 0 2040 1160" preserveAspectRatio="none" style="left:${BOOK_X}px;top:-40px;width:${BOOK_W}px;height:1160px;mix-blend-mode:multiply;pointer-events:none">
+      <filter id="mot" x="0" y="0" width="100%" height="100%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.004 0.006" numOctaves="5" seed="7"/>
+        <feColorMatrix type="matrix" values="0 0 0 0 .52  0 0 0 0 .34  0 0 0 0 .14  3.2 0 0 0 -1.45"/>
+      </filter>
+      <filter id="fox" x="0" y="0" width="100%" height="100%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.07" numOctaves="2" seed="3"/>
+        <feColorMatrix type="matrix" values="0 0 0 0 .45  0 0 0 0 .27  0 0 0 0 .1  12 0 0 0 -7.6"/>
+        <feGaussianBlur stdDeviation="1.2"/>
+      </filter>
+      <rect width="100%" height="100%" filter="url(#mot)" opacity=".6"/>
+      <rect width="100%" height="100%" filter="url(#fox)" opacity=".45"/>
+      ${[[230, 1010, 120], [1990, 120, 100]].map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="rgba(120,70,20,.13)" stroke-width="7" stroke-dasharray="${r * 3} ${r * .9}"/><circle cx="${x}" cy="${y}" r="${r * .93}" fill="rgba(140,90,30,.06)"/>`).join('')}
+    </svg>
+    <div class="abs" style="inset:-40px;background:radial-gradient(ellipse at 50% 50%, transparent 45%, rgba(90,50,10,.35) 80%, rgba(50,25,5,.6) 100%);pointer-events:none"></div>`;
+  // 右頁：名畫像印在書頁上的插圖（乘在羊皮紙上），外面一圈細框
+  // 畫幾乎跟書頁一樣高
+  const IH = 970, IW = IH * 546 / 800, IX = MID + 470 - IW / 2, IY = 540 - IH / 2;
+  html += `<div class="abs" style="left:${IX - 26}px;top:${IY - 26}px;width:${IW + 52}px;height:${IH + 52}px;border:2px solid rgba(70,40,15,.55);outline:1px solid rgba(70,40,15,.35);outline-offset:6px"></div>
+    <img class="abs" src="${P.img}" style="left:${IX}px;top:${IY}px;width:${IW}px;height:${IH}px;mix-blend-mode:multiply;filter:sepia(.25) contrast(1.05)">`;
+  // 左頁：手寫文字，一行一行寫出來
+  const RX = MID - 960 + 60, RW = 860;
+  const rows = [];
+  spec.forEach((s, i) => {
+    const h = s.size * 1.25;
+    const chars = s.en ? [s.l] : [...s.l];
+    html += `<div class="ink" data-r="${i}" style="left:${RX}px;width:${RW}px;top:${y}px;height:${h}px;line-height:${h}px;font:${s.font};color:${s.color};letter-spacing:${s.en ? 0 : .06}em;transform:rotate(${i % 2 ? -.6 : .4}deg)">${chars.map(c => `<span class="ch">${esc(c)}</span>`).join('')}</div>`;
+    rows.push({ ...s, y, h, chars });
+    y += h + (i < spec.length - 1 ? gapAfter(i) : 0);
+    // 英文副標下面畫一道手繪分隔花紋
+    if (i === 2) rows.divY = y - gapAfter(i) / 2 - 4;
+  });
+  // 字的斑駁感：在左頁蓋一層「變亮」混合圖層。顏色比紙暗、比墨水亮，
+  // 所以只會把墨水的地方提亮（墨色變淡、出現小剝落點），紙張本身幾乎不受影響
+  html += `<svg class="abs" viewBox="0 0 1020 1160" style="left:${BOOK_X}px;top:-40px;width:${BOOK_W / 2}px;height:1160px;mix-blend-mode:lighten;pointer-events:none;z-index:5">
+      <filter id="fade" filterUnits="userSpaceOnUse" x="160" y="180" width="760" height="800">
+        <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="3" seed="11"/>
+        <feColorMatrix type="matrix" values="0 0 0 0 .3  0 0 0 0 .21  0 0 0 0 .12  1.4 0 0 0 -.68"/>
+      </filter>
+      <filter id="chip" filterUnits="userSpaceOnUse" x="160" y="180" width="760" height="800">
+        <feTurbulence type="fractalNoise" baseFrequency="0.11" numOctaves="2" seed="5"/>
+        <feColorMatrix type="matrix" values="0 0 0 0 .43  0 0 0 0 .32  0 0 0 0 .18  14 0 0 0 -9.3"/>
+      </filter>
+      <!-- 只蓋在文字那一塊，避開書頁邊緣比較暗的地方 -->
+      <!-- 小標和畫名（前兩行）只留三成的斑駁，比較清楚 -->
+      <mask id="wear" maskUnits="userSpaceOnUse" x="0" y="0" width="1020" height="1160">
+        <rect width="1020" height="1160" fill="#fff"/>
+        <rect x="0" y="${rows[0].y + 40 - 10}" width="1020" height="${rows[1] ? rows[1].y + rows[1].h - rows[0].y + 20 : rows[0].h + 20}" fill="#4d4d4d"/>
+      </mask>
+      <g mask="url(#wear)">
+        <rect x="160" y="180" width="760" height="800" filter="url(#fade)"/>
+        <rect x="160" y="180" width="760" height="800" filter="url(#chip)"/>
+      </g>
+    </svg>`;
+  const DW = 300;
+  html += `<svg id="div" class="abs" viewBox="0 0 300 40" style="left:${RX + RW / 2 - DW / 2}px;top:${(rows.divY || y) - 20}px;width:${DW}px;height:40px;overflow:visible;mix-blend-mode:multiply">
+      <path pathLength="1" d="M10 20 C 60 4, 100 36, 150 20 C 200 4, 240 36, 290 20" fill="none" stroke="${RUST}" stroke-width="3" stroke-linecap="round"/>
+      <path pathLength="1" d="M150 8 C 140 18, 140 22, 150 32 C 160 22, 160 18, 150 8 Z" fill="none" stroke="${RUST}" stroke-width="2.5"/></svg>`;
+  html += `</div>`;
+  scene.innerHTML = html;
+
+  // 寫字順序：英文那行跟上面的中文同時寫（例如畫名和原文一起出來）；時間依字數分配，整段塞進 ANIM_MAX 秒內
+  const ANIM_MAX = 6;
+  const els = [...scene.querySelectorAll('.ink')];
+  const groups = [];
+  rows.forEach((r, i) => {
+    r.el = els[i];
+    r.spans = [...r.el.querySelectorAll('.ch')];
+    r.raw = r.en ? .9 + r.l.length * .025 : .22 * r.chars.length + .2;
+    if (r.en && i > 0) groups[groups.length - 1].push(r); else groups.push([r]);
+  });
+  // 分隔花紋跟在英文畫名那一組後面
+  const divG = rows[2] ? groups.findIndex(g => g.includes(rows[2])) : -1;
+  const gap = gi => gi === divG ? .55 : .2;
+  const graw = groups.map(g => Math.max(...g.map(r => r.raw)));
+  const fixed = .3 + groups.reduce((a, g, gi) => a + gap(gi), 0) + .5;
+  const k = Math.min(1, (ANIM_MAX - fixed) / graw.reduce((a, b) => a + b, 0));
+  let t = .3, tDiv = null;
+  groups.forEach((g, gi) => {
+    const d = graw[gi] * k;
+    g.forEach(r => { r.t0 = t; r.d = d; });
+    t += d + gap(gi);
+    if (gi === divG) tDiv = t - gap(gi) + .08;
+  });
+  if (tDiv == null) tDiv = t;
+  const div = scene.querySelector('#div');
+  ANIM = Math.max(ANIM_MAX, t + .5);
+  DUR = P.pre + ANIM + P.post;
+  R = { rows, cam: scene.querySelector('#cam'), divPaths: [...div.querySelectorAll('path')], tDiv };
+  R.divPaths.forEach(p => p.style.strokeDasharray = 1);
+}
+
+// 墨水寫字：每個字用斜斜的遮罩從左上往右下露出來；英文整行從左往右寫
+function inkMask(el, p, angle) {
+  const a = p * 140 - 20;
+  const m = `linear-gradient(${angle}deg, #000 ${a}%, transparent ${a + 20}%)`;
+  el.style.webkitMaskImage = el.style.maskImage = m;
+}
+function renderAt(time) {
+  const t = clamp(time - P.pre, -1, ANIM);
+  // 鏡頭：很慢地推近，稍微往右頁移
+  const c = ease.inOutSine(prog(t, 0, ANIM));
+  R.cam.style.transform = `translate(${30 * c}px,${-6 * c}px) scale(${1 + .06 * c})`;
+  R.rows.forEach(r => {
+    if (r.en) {
+      inkMask(r.spans[0], prog(t, r.t0, r.d), 90);
+    } else {
+      const n = r.spans.length;
+      r.spans.forEach((s, k) => inkMask(s, prog(t, r.t0 + k * r.d / n, r.d / n * 1.5), 125));
+    }
+  });
+  R.divPaths.forEach((p, k) => p.style.strokeDashoffset = 1 - ease.outCubic(prog(t, R.tDiv + k * .25, .5)));
+}
+function buildSfx() {
+  const ev = [{ t: P.pre - .2, type: 'pad', root: 196, dur: ANIM + 1.2, attack: 1.4, lp: 1200, gain: .22 }];
+  // 筆尖在紙上沙沙寫字的聲音，每一行一段，壓得很輕
+  R.rows.forEach(r => ev.push({ t: P.pre + r.t0, type: 'marker', dur: r.d, gain: r.en ? .1 : .13 }));
+  ev.push({ t: P.pre + R.tDiv, type: 'marker', dur: .6, gain: .08 });
+  return { master: { lp: 2600, verb: .25 }, events: ev };
+}
+
+/* ---------------- 播放與輸出 ---------------- */
+async function start() {
+  await Promise.all([
+    document.fonts.load(`700 80px ${FONT_ZH}`, '友誼的故事禱告手阿爾布雷希特杜勒'), document.fonts.load(`400 60px ${FONT_EN}`, 'The Praying Hands'),
+    ...['textures/Paper001.jpg', 'textures/Paper003.jpg', 'textures/Paper006.jpg', P.img].map(src => new Promise(res => { const im = new Image(); im.onload = im.onerror = res; im.src = src; })),
+  ]);
+  build();
+  window.DUR = DUR; window.renderAt = renderAt; window.SFX = buildSfx();
+  // 全版背景，不需要透明檔
+  window.OPAQUE = true;
+  renderAt(0);
+  window.READY = true;
+}
+const $ = s => document.getElementById(s);
+function fit() { if (!P.render) scene.style.transform = `scale(${$('stage').clientWidth / W})`; }
+let t0 = performance.now(), playing = true, cur = 0;
+function tick(now) {
+  if (window.READY && playing) {
+    cur = ((now - t0) / 1000) % (DUR + .6);
+    renderAt(Math.min(cur, DUR));
+    $('scrub').value = Math.min(cur, DUR) / DUR;
+    $('time').textContent = `${Math.min(cur, DUR).toFixed(2)} / ${DUR.toFixed(2)}`;
+  }
+  requestAnimationFrame(tick);
+}
+if (!P.render) {
+  $('title').value = P.title;
+  $('title').addEventListener('change', () => { P.title = $('title').value; build(); window.DUR = DUR; t0 = performance.now(); });
+  $('play').onclick = () => {
+    playing = !playing; $('play').textContent = playing ? '暫停' : '播放';
+    if (playing) t0 = performance.now() - cur * 1000;
+  };
+  $('scrub').oninput = e => {
+    playing = false; $('play').textContent = '播放';
+    cur = e.target.value * DUR; renderAt(cur);
+    $('time').textContent = `${cur.toFixed(2)} / ${DUR.toFixed(2)}`;
+  };
+  addEventListener('resize', fit); fit();
+  start().then(() => requestAnimationFrame(tick));
+} else {
+  start();
+}
+</script>
+</body>
+</html>

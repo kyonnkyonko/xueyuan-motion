@@ -49,7 +49,7 @@
     <span id="time">0.00 / 0.00</span>
   </div>
   <div class="bar">
-    <label>畫面 <select id="scene"><option value="intro">片頭 A 畫碗</option><option value="intro2">片頭 B 滾輪</option><option value="intro3">片頭 C 斜切</option><option value="intro4">片頭 D 上下</option><option value="intro5">片頭 E 左右</option><option value="chapter">章節 A 有號碼</option><option value="chapter2">章節 B 置中</option><option value="chapter3">章節 C 膠囊</option></select></label>
+    <label>畫面 <select id="scene"><option value="intro">片頭 A 畫碗</option><option value="intro3">片頭 C 斜切</option><option value="intro5">片頭 E 左右</option><option value="chapter">章節 A 有號碼</option><option value="chapter2">章節 B 置中</option><option value="chapter3">章節 C 膠囊</option></select></label>
     <label>章節 <input id="num" class="num" type="text"></label>
     <label>標題 <input id="title" class="title" type="text"></label>
     <label>副標 <input id="sub" class="title" type="text" placeholder="可留空"></label>
@@ -403,69 +403,6 @@ function layoutTitle(text, size, maxW, gap = 6) {
   return { chars, size, widths, xs, total };
 }
 
-/* ---------------- 片頭 B：滾輪 ---------------- */
-// logomark 像行李輪子一樣滾進來，字從上面掉下來彈跳，最後用斜切帶離場
-function buildIntro2() {
-  const DUR = 4.6, BW = 170;
-  const content = diagLayer(svg);
-  el('rect', { width: W, height: H, fill: C.cream }, content.g);
-  const all = el('g', {}, content.g);
-  const ground = el('line', { y1: 540 + 140, y2: 540 + 140, stroke: C.orange, 'stroke-width': 6, 'stroke-linecap': 'round' }, all);
-  const dust = Array.from({ length: 6 }, (_, i) => el('circle', { fill: i % 2 ? C.yellow : C.orange }, all));
-  const mark = buildMark(all);
-  const type = buildType(all, 220);
-  const outBands = bands(svg, [C.teal, C.orange, C.yellow]);
-  const FX = 424, TX = 664, TY = 540 - 41 * 3, R = 38 * 3;
-  const LAND = .95;
-
-  function renderAt(t) {
-    const ex = ease.inOutCubic(prog(t, 3.55, .95));
-    const p = lerp(DMIN - 10, DMAX + BW * 3 + 10, ex);
-    content.set(p, 9999);
-    outBands.forEach((b, i) => b.setAttribute('points', stripe(p - BW * (i + 1), p - BW * i)));
-
-    const rv = ease.outCubic(prog(t, 0, LAND));
-    const x = lerp(-260, FX, rv);
-    const squash = Math.sin(clamp((t - LAND) / .35) * Math.PI) * Math.exp(-(t - LAND) * 4) * (t > LAND ? 1 : 0);
-    const rot = -((FX - x) / R) * 180 / Math.PI;
-    setMark(mark, { x, y: 540, s: 3, rot, circle: 1, arc: 1, chop1: 1, chop2: 1 });
-    mark.g.setAttribute('transform', `translate(${x},${540 + squash * 10}) rotate(${rot}) scale(${3 * (1 + squash * .1)},${3 * (1 - squash * .1)})`);
-
-    const gv = ease.outCubic(prog(t, 0, LAND)), gOut = ease.inCubic(prog(t, 1.2, .5));
-    ground.setAttribute('x1', lerp(-260, FX, gOut));
-    ground.setAttribute('x2', lerp(-260, FX + 40, gv));
-    ground.setAttribute('opacity', 1 - gOut);
-    dust.forEach((d, i) => {
-      const k = prog(t, LAND, .6), dir = i < 3 ? -1 : 1, j = i % 3;
-      d.setAttribute('cx', FX + dir * (60 + ease.outExpo(k) * (80 + j * 50)));
-      d.setAttribute('cy', 540 + 130 - ease.outExpo(k) * (30 + j * 25) + k * k * 60);
-      d.setAttribute('r', k > 0 ? (9 - j * 2) * (1 - k) : 0);
-    });
-
-    type.g.setAttribute('transform', `translate(${TX},${TY}) scale(3)`);
-    type.chars.forEach((c, i) => {
-      const k = prog(t, 1.15 + i * .12, .8);
-      const y = (1 - ease.outBounce(k)) * -150;
-      c.mv.setAttribute('transform', `translate(0,${k > 0 ? y : -400})`);
-      c.dots.forEach((d, j) => d.style.transform = `scale(${Math.max(0, ease.outBack(prog(t, 2.15 + i * .07 + j * .04, .4)))})`);
-    });
-    all.setAttribute('transform', `translate(960,540) scale(${1 + .02 * prog(t, 2, 1.6)}) translate(-960,-540)`);
-  }
-  // outBounce 第一次落地大約在 36% 的位置
-  const land = i => 1.15 + i * .12 + .8 * .364;
-  const sfx = [
-    { t: 0, type: 'whoosh', dur: .9, f0: 150, f1: 900, gain: .55, pan: -.6 },
-    { t: LAND - .02, type: 'impact', gain: .55 }, { t: LAND, type: 'knock', pitch: .8 },
-    ...[0, 1, 2, 3].flatMap(i => [
-      { t: land(i), type: 'knock', pitch: .9 + i * .08, gain: .8 },
-      { t: land(i) + .8 * .32, type: 'knock', pitch: 1.1 + i * .08, gain: .3 },
-    ]),
-    { t: 2.15, type: 'pop', pitch: 1.6, gain: .5 }, { t: 2.25, type: 'chime', gain: .75, root: 587.33 },
-    { t: 3.5, type: 'whoosh', dur: 1.0, f0: 250, f1: 4500, gain: .9, pan: .3 },
-  ];
-  return { DUR, renderAt, sfx };
-}
-
 /* ---------------- 片頭 C：斜切 + 直式 ---------------- */
 // 三條斜帶刷進來，logomark 旋轉縮進中間，字一個個彈出，最後整組往鏡頭衝過去
 function buildIntro3() {
@@ -542,26 +479,48 @@ function buildChapter2() {
   const outBands = bands(svg, [C.yellow, C.orange]);
 
   const mark = buildMark(all);
-  const L = layoutTitle(P.title, 150, 1400, 8);
-  const BASE = HAS_SUB ? 600 : 650, X0 = 960 - L.total / 2, MARK_Y = BASE - 250;
+  // 標題可以用 \n 分成多行：第一行是大標，後面幾行小一點；副標也可以多行（多行時字小一點，例如經文）
+  const tLines = P.title.split('\n').map(x => x.trim()).filter(Boolean);
+  const subLines = HAS_SUB ? P.sub.split('\n').map(x => x.trim()).filter(Boolean) : [];
+  const first = layoutTitle(tLines[0], 150, 1400, 8);
+  const Ls = [first, ...tLines.slice(1).map(l => layoutTitle(l, first.size * .6, 1500, 6))];
+  // 每一行的底線位置（相對第一行）
+  const ys = [0];
+  for (let r = 1; r < Ls.length; r++) ys.push(ys[r - 1] + Ls[r - 1].size * .42 + Ls[r].size * 1.15);
+  const SIZE = Ls[Ls.length - 1].size;
+  const SUB_FS = subLines.length > 1 ? 44 : 60, SUB_LH = SUB_FS * 1.65;
+  const simple = Ls.length === 1 && subLines.length <= 1;
+  // 第一行標題底線到最後一行副標的距離；單行時位置跟原本一樣
+  const lastOff = ys[ys.length - 1];
+  const subOff = lastOff + (simple ? 125 : SIZE * .5 + 80);
+  const bottom = subLines.length ? subOff + (subLines.length - 1) * SUB_LH + 16 : lastOff + SIZE * .3;
+  const BASE = simple ? (HAS_SUB ? 600 : 650) : 540 - (bottom - 330) / 2, MARK_Y = BASE - 250;
   const lines = [0, 1].map(() => el('line', { stroke: C.orange, 'stroke-width': 8, 'stroke-linecap': 'round' }, all));
-  const hl = el('rect', { y: BASE - L.size * .42, height: L.size * .46, fill: C.yellow, 'fill-opacity': .6 }, all);
-  const clipId = id('t2');
-  el('rect', { x: 0, y: BASE - L.size * 1.15, width: W, height: L.size * 1.45 }, el('clipPath', { id: clipId }, defs));
-  const tg = el('g', { 'clip-path': `url(#${clipId})` }, all);
-  const nodes = L.chars.map((ch, i) => {
-    const n = el('text', { x: X0 + L.xs[i], y: BASE, 'font-family': FONT, 'font-weight': 900, 'font-size': L.size, fill: C.ink }, tg);
-    n.textContent = ch; return n;
+  let ci = 0;
+  const rows = Ls.map((L, r) => {
+    const y = BASE + ys[r], X0 = 960 - L.total / 2, S = L.size;
+    const hl = el('rect', { y: y - S * .42, height: S * .46, fill: C.yellow, 'fill-opacity': .6 }, all);
+    const clipId = id('t2');
+    el('rect', { x: 0, y: y - S * 1.15, width: W, height: S * 1.45 }, el('clipPath', { id: clipId }, defs));
+    const tg = el('g', { 'clip-path': `url(#${clipId})` }, all);
+    const nodes = L.chars.map((ch, i) => {
+      const n = el('text', { x: X0 + L.xs[i], y, 'font-family': FONT, 'font-weight': 900, 'font-size': S, fill: C.ink }, tg);
+      n.textContent = ch; n.k = ci++; return n;
+    });
+    return { L, y, X0, hl, nodes, r };
   });
-  // 副標：置中一行，太長就縮小
-  const sub = el('text', { x: 960, y: BASE + 125, 'text-anchor': 'middle', 'font-family': FONT, 'font-weight': 700,
-    'font-size': 60, fill: C.sub, 'letter-spacing': 4 }, all);
-  sub.textContent = P.sub;
-  if (HAS_SUB) {
-    const sw = sub.getComputedTextLength();
-    if (sw > 1500) sub.setAttribute('font-size', 60 * 1500 / sw);
-  }
+  // 副標：置中，太長就縮小
+  const subs = subLines.map((line, k) => {
+    const t = el('text', { x: 960, y: BASE + subOff + k * SUB_LH, 'text-anchor': 'middle', 'font-family': FONT, 'font-weight': 700,
+      'font-size': SUB_FS, fill: C.sub, 'letter-spacing': simple ? 4 : 2 }, all);
+    t.textContent = line;
+    const sw = t.getComputedTextLength();
+    if (sw > 1500) t.setAttribute('font-size', SUB_FS * 1500 / sw);
+    return t;
+  });
 
+  // 離場時每個字往上飛走的間隔；字很多時壓縮在 0.22 秒內，才不會被轉場色帶蓋住還沒飛走（短標題維持原本的 0.025）
+  const OUT_STEP = Math.min(.025, .22 / Math.max(1, ci - 1));
   function renderAt(realT) {
     // 進場照原本時間跑，2.4 秒之後先停住 HOLD 秒，再接著離場
     const t = realT < 2.4 ? realT : Math.max(2.4, realT - HOLD);
@@ -583,36 +542,36 @@ function buildChapter2() {
     mark.g.setAttribute('opacity', 1 - up(0));
 
     const drift = prog(realT, .9, 2.2 + HOLD) * 8;
-    nodes.forEach((n, i) => {
-      const v = ease.outExpo(prog(t, .6 + i * .05, .7));
-      n.setAttribute('transform', `translate(0,${(1 - v) * L.size * 1.2 - up(.04 + i * .025) * L.size * 1.3 - drift})`);
+    rows.forEach(row => {
+      row.nodes.forEach(n => {
+        const v = ease.outExpo(prog(t, .6 + n.k * .05, .7));
+        n.setAttribute('transform', `translate(0,${(1 - v) * row.L.size * 1.2 - up(.04 + n.k * OUT_STEP) * row.L.size * 1.3 - drift})`);
+      });
+      const hv = ease.outExpo(prog(t, .95 + row.r * .15, .6)) * (1 - ease.inCubic(prog(t, 2.6, .3)));
+      row.hl.setAttribute('x', 960 - (row.L.total / 2 + 16) * hv);
+      row.hl.setAttribute('width', (row.L.total + 32) * hv);
+      row.hl.setAttribute('transform', `translate(0,${-drift})`);
     });
-    const hv = ease.outExpo(prog(t, .95, .6)) * (1 - ease.inCubic(prog(t, 2.6, .3)));
-    hl.setAttribute('x', 960 - (L.total / 2 + 16) * hv);
-    hl.setAttribute('width', (L.total + 32) * hv);
-    hl.setAttribute('transform', `translate(0,${-drift})`);
 
+    // 兩側的短線：以整段標題為主體，放在最寬那一行的外側、整段的垂直中間
     const lv = ease.outExpo(prog(t, 1.0, .7)) * (1 - ease.inCubic(prog(t, 2.55, .35)));
-    const ly = BASE - L.size * .36 - drift;
-    [[X0 - 50, -1], [X0 + L.total + 50, 1]].forEach(([sx, dir], i) => {
+    const half = Math.max(...rows.map(rw => rw.L.total)) / 2;
+    const mid = rw => rw.y - rw.L.size * .36;
+    const ly = (mid(rows[0]) + mid(rows[rows.length - 1])) / 2 - drift;
+    [[960 - half - 50, -1], [960 + half + 50, 1]].forEach(([sx, dir], i) => {
       const ln = lines[i];
       ln.setAttribute('x1', sx); ln.setAttribute('x2', sx + dir * 150 * lv);
       ln.setAttribute('y1', ly); ln.setAttribute('y2', ly);
       ln.setAttribute('opacity', lv > .01 ? 1 : 0);
     });
 
-    const sv = ease.outExpo(prog(t, 1.15, .7)), so = up(.12);
-    sub.setAttribute('opacity', sv * (1 - so));
-    sub.setAttribute('transform', `translate(0,${(1 - sv) * 30 - so * 50 - drift})`);
+    subs.forEach((sub, k) => {
+      const sv = ease.outExpo(prog(t, 1.15 + k * .12, .7)), so = up(.08 + k * .04);
+      sub.setAttribute('opacity', sv * (1 - so));
+      sub.setAttribute('transform', `translate(0,${(1 - sv) * 30 - so * 50 - drift})`);
+    });
   }
   const SETS = {
-    // 候選 1「輕刷」：只有紙張滑過的風聲和一下悶悶的木頭聲
-    1: { master: { lp: 4500, verb: .15 }, events: [
-      { t: 0, type: 'air', dur: .8, f0: 180, f1: 1100, gain: .6 },
-      { t: .42, type: 'softpop', pitch: .9, gain: .35 },
-      { t: .72, type: 'thock', gain: .45 },
-      { t: 2.8, type: 'air', dur: .85, f0: 1000, f1: 200, gain: .5 },
-    ] },
     // 候選 2「木琴」：風聲放輕，加三個圓圓的木琴音（離場只留風聲）
     2: { master: { lp: 4500, verb: .25 }, events: [
       { t: 0, type: 'air', dur: .8, f0: 180, f1: 1000, gain: .35 },
@@ -702,67 +661,6 @@ function buildChapter3() {
   return { DUR, renderAt, sfx: [] };
 }
 
-/* ---------------- 片頭 D：上下排列 ---------------- */
-// 餅從上面掉進來彈兩下，碗邊轉一圈畫出來，字從中間往兩邊展開，最後整片像捲簾往上拉走
-function buildIntro4() {
-  const DUR = 4.6, BH = 70;
-  const curtain = el('g', {}, svg);
-  el('rect', { width: W, height: H, fill: C.cream }, curtain);
-  el('rect', { y: H, width: W, height: BH, fill: C.orange }, curtain);
-  el('rect', { y: H + BH, width: W, height: BH, fill: C.yellow }, curtain);
-  const all = el('g', {}, curtain);
-  const shadow = el('ellipse', { fill: C.orange, 'fill-opacity': .14 }, all);
-  const mark = buildMark(all);
-  const TS = 2.4, TW = 317 * TS, TX = 960 - TW / 2, TY = 585, MXs = 960, MYs = 405;
-  const clipId = id('dc');
-  const clipR = el('rect', { y: TY - 30, height: 82 * TS + 60 }, el('clipPath', { id: clipId }, defs));
-  const typeWrap = el('g', { 'clip-path': `url(#${clipId})` }, all);
-  const type = buildType(typeWrap, 60);
-  const bar = el('rect', { height: 12, rx: 6, fill: C.yellow, 'fill-opacity': .6 }, all);
-
-  function renderAt(t) {
-    const up = ease.inOutCubic(prog(t, 3.55, .95));
-    curtain.setAttribute('transform', `translate(0,${-up * (H + BH * 2 + 10)})`);
-
-    const drop = ease.outBounce(prog(t, 0, .75));
-    const y = lerp(-250, MYs, drop);
-    const spin = ease.outCubic(prog(t, .6, .7));
-    setMark(mark, {
-      x: MXs, y, s: 3.2, rot: lerp(-200, 0, spin),
-      circle: 1, arc: spin, chop1: ease.outExpo(prog(t, 1.05, .45)), chop2: ease.outExpo(prog(t, 1.15, .45)),
-    });
-    const sh = clamp(1 - (MYs - y) / 600) * (1 - prog(t, 1.1, .4));
-    shadow.setAttribute('cx', MXs); shadow.setAttribute('cy', MYs + 150);
-    shadow.setAttribute('rx', 110 * sh); shadow.setAttribute('ry', 18 * sh);
-
-    const rv = ease.outExpo(prog(t, 1.35, .9));
-    clipR.setAttribute('x', 960 - (TW / 2 + 40) * rv);
-    clipR.setAttribute('width', (TW + 80) * rv);
-    type.g.setAttribute('transform', `translate(${TX},${TY + (1 - rv) * 24}) scale(${TS})`);
-    type.chars.forEach((c, i) => c.dots.forEach((d, j) =>
-      d.style.transform = `scale(${Math.max(0, ease.outBack(prog(t, 1.9 + i * .06 + j * .04, .4)))})`));
-    const bv = ease.outExpo(prog(t, 1.65, .7));
-    bar.setAttribute('x', 960 - (TW / 2 + 30) * bv);
-    bar.setAttribute('width', (TW + 60) * bv);
-    bar.setAttribute('y', TY + 82 * TS + 34);
-  }
-  const sfx = {
-    master: { lp: 5000, verb: .22 },
-    events: [
-      { t: .27, type: 'thock', pitch: .8, gain: .7 }, { t: .55, type: 'thock', pitch: .8, gain: .3 },
-      { t: .68, type: 'thock', pitch: .8, gain: .12 },
-      { t: .6, type: 'air', dur: .7, f0: 200, f1: 1000, gain: .35 },
-      { t: 1.07, type: 'thock', gain: .55 }, { t: 1.17, type: 'thock', pitch: 1.1, gain: .5 },
-      { t: 1.32, type: 'air', dur: .6, f0: 250, f1: 900, gain: .3 },
-      ...[330, 392, 523].map((f, i) => ({ t: 1.38 + i * .1, type: 'mallet', freq: f, gain: .45 })),
-      { t: 1.92, type: 'softpop', pitch: 1.4, gain: .3 },
-      { t: 2.0, type: 'pad', root: 261.63, dur: 2.4, gain: .5 },
-      { t: 3.5, type: 'air', dur: 1.0, f0: 150, f1: 1300, gain: .55 },
-    ],
-  };
-  return { DUR, renderAt, sfx };
-}
-
 /* ---------------- 片頭 E：左右排列 ---------------- */
 // 整個畫面的黃色縮成餅，畫好碗和筷子後往左移，字從 logo 後面拉出來，最後用直條往右刷走
 function buildIntro5() {
@@ -829,7 +727,7 @@ async function build() {
   await document.fonts.load(`900 100px ${FONT}`);
   svg.innerHTML = ''; uid = 0;
   defs = el('defs', {}, svg);
-  scene = ({ intro: buildIntro, intro2: buildIntro2, intro3: buildIntro3, intro4: buildIntro4, intro5: buildIntro5, chapter: buildChapter, chapter2: buildChapter2, chapter3: buildChapter3 }[P.scene] || buildIntro)();
+  scene = ({ intro: buildIntro, intro3: buildIntro3, intro5: buildIntro5, chapter: buildChapter, chapter2: buildChapter2, chapter3: buildChapter3 }[P.scene] || buildIntro)();
   window.SFX = scene.sfx || [];
   window.DUR = scene.DUR;
   window.renderAt = scene.renderAt;
