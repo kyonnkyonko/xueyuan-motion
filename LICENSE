@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This license covers the source code only. The "學園好食" name, the logo
-vector paths in logo.js, and the brand color scheme are not licensed under
-MIT and remain the property of their owner. Third-party assets (textures,
-images, fonts) keep their own licenses as listed in README.md.
